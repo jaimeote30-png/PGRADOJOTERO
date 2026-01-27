@@ -1,0 +1,695 @@
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+## Se considera que solo se usará la seccion VI del PCI para las 3 longitudes 35, 25, 15
+## Se tienen los 9 puntos de analisis de la viga
+
+## DEFINIR LOS PARÁMETROS GEOMÉTRICOS DE LA VIGA Y NODOS DE INTERÉS
+## PARA EVITAR CONFUSIONES TODAS MAS MEDIDAS DE LONGITUD SON EN METROS
+
+##-----------------------------------------##
+LTOTAL=35
+PIZAJE= 200 # Ton
+SXNVIGA= "VI"
+PA=0.7
+PEN= 0.924
+PIF=0.30523
+PID=0.02563
+PESO=16.49  # kN/m
+PTOR= 0.01555 #m^4
+PCW= 2
+fc=49 # MPa
+
+# -------------------------------
+# Ángulo de inclinación de la viga
+# -------------------------------
+Grados = 10                # Ángulo en grados (entrada del modelo)
+alpha = np.deg2rad(Grados) # Conversión a radianes
+
+##-----------------------------------------##
+
+#MIRAR TABLAS PARA COLOCAR VALORES GEOM---------------------------------------------------------------------------------
+
+#DEFINIR NODOS Y POSICIONES
+
+##-----------------------------------------##
+a_L = 0.2       # Relación a/L
+h = 1.8         # Distancia h desde los puntos de izaje (m)
+##-----------------------------------------##
+
+
+
+a = a_L * LTOTAL
+
+# -------------------------------
+# 3. Función para limitar nodos al dominio [0, L]
+# -------------------------------
+def limitar(x, LTOTAL):
+    return max(0.0, min(x, LTOTAL))
+
+# -------------------------------
+# 4. Posición de los 9 nodos (con control geométrico)
+# -------------------------------
+nodos = np.array([
+    0.0,                          # Extremo izquierdo
+    limitar(a - h, LTOTAL),            # Antes izaje izquierdo
+    a,                            # Izaje izquierdo
+    limitar(a + h, LTOTAL),            # Después izaje izquierdo
+    LTOTAL / 2,                        # Mitad de la viga
+    limitar(LTOTAL - a - h, LTOTAL),        # Antes izaje derecho
+    LTOTAL - a,                        # Izaje derecho
+    limitar(LTOTAL - a + h, LTOTAL),        # Después izaje derecho
+    LTOTAL                             # Extremo derecho
+])
+
+# -------------------------------
+# 5. Organización visual
+# -------------------------------
+df_nodos = pd.DataFrame({
+    "Nodo": [f"N{i+1}" for i in range(len(nodos))],
+    "Posición [m]": nodos.round(3)
+})
+
+df_nodos
+
+print(df_nodos.to_string(index=False))
+
+
+nodos = np.array(nodos)
+num_nodos = len(nodos)
+
+plt.figure(figsize=(16, 3))
+
+# Dibujo de la viga
+plt.hlines(y=0, xmin=0, xmax=LTOTAL, linewidth=6)
+plt.scatter(nodos, np.zeros_like(nodos), s=80, zorder=3)
+
+# Alternar etiquetas arriba y abajo
+offsets = [0.25 if i % 2 == 0 else -0.35 for i in range(num_nodos)]
+
+for i, (x, dy) in enumerate(zip(nodos, offsets)):
+    plt.annotate(
+        f"N{i+1}\n{x:.2f} m",
+        xy=(x, 0),
+        xytext=(x, dy),
+        textcoords="data",
+        ha="center",
+        fontsize=9,
+        arrowprops=dict(arrowstyle="-", lw=0.8)
+    )
+
+# Etiqueta del centro
+plt.text(LTOTAL / 2, 0.55, f"Viga – Longitud total = {LTOTAL:.2f} m",
+         ha="center", fontsize=12, fontweight="bold")
+
+# Estética
+plt.yticks([])
+plt.xlabel("Posición a lo largo de la viga [m]")
+plt.xlim(-0.5, LTOTAL + 0.5)
+plt.ylim(-0.6, 0.8)
+plt.grid(axis="x", linestyle="--", alpha=0.4)
+
+plt.tight_layout()
+plt.show()
+
+
+
+## PARTE DE LA MATRIZ DE AQUÍ EN ADELANTE ------------------------------------------------------------------------------------------------------------------
+
+# -------------------------------
+# 1. Definir etiquetas de filas y columnas
+# -------------------------------
+labels = [
+    "u1","v1","w1","θx1","θy1","θz1","θ'x1",
+    "u2","v2","w2","θx2","θy2","θz2","θ'x2"
+]
+
+# -------------------------------
+# 1. Matriz original con letras
+# -------------------------------
+K_letras = np.array([
+["A","0","0","0","0","0","0","-A","0","0","0","0","0","0"],
+["0","B","0","0","0","G","0","0","-B","0","0","0","G","0"],
+["0","0","C","0","-H","0","0","0","0","-C","0","-H","0","0"],
+["0","0","0","D","0","0","I","0","0","0","-D","0","0","I"],
+["0","0","-H","0","E","0","0","0","0","H","0","L","0","0"],
+["0","G","0","0","0","F","0","0","-G","0","0","0","M","0"],
+["0","0","0","I","0","0","K","0","0","0","-I","0","0","-J"],
+
+["-A","0","0","0","0","0","0","A","0","0","0","0","0","0"],
+["0","-B","0","0","0","-G","0","0","B","0","0","0","-G","0"],
+["0","0","-C","0","H","0","0","0","0","C","0","H","0","0"],
+["0","0","0","-D","0","0","-I","0","0","0","D","0","0","-I"],
+["0","0","-H","0","L","0","0","0","0","H","0","E","0","0"],
+["0","G","0","0","0","M","0","0","-G","0","0","0","F","0"],
+["0","0","0","I","0","0","-J","0","0","0","-I","0","0","K"]
+], dtype=object)
+
+# -------------------------------
+# 2. Valores de las letras
+# -------------------------------
+#Variables para las letras:
+
+Ls=LTOTAL/8 
+A=PA
+E=4700*(fc**0.5)
+Iy=PIF
+Iz=PID
+v=0.2
+G=E/(2*(1+v))
+Cw=PCW
+J=PTOR
+q = PESO*PA
+
+
+ndof_nodo = 7
+num_nodos = len(nodos)
+ndof_total = ndof_nodo * num_nodos
+
+K_global = np.zeros((ndof_total, ndof_total))
+
+def matriz_elemental(Ls):
+    if Ls <= 0:
+        return None
+
+    valores = {
+        "A": (E*A)/Ls,
+        "B": (12*E*Iz)/(Ls**3),
+        "C": (12*E*Iy)/(Ls**3),
+        "D": ((6*G*J)/(5*Ls))+((12*E*Cw)/(Ls**3)),
+        "E": (4*E*Iy)/Ls,
+        "F": (4*E*Iz)/Ls,
+        "G": (6*E*Iz)/(Ls**2),
+        "H": (6*E*Iz)/(Ls**2),
+        "I": ((G*J)/(10))+((6*E*Cw)/(Ls**2)),
+        "J": ((G*J*Ls)/(30))-((2*E*Cw)/(Ls)),
+        "K": ((2*G*J*Ls)/(15))+((4*E*Cw)/(Ls)),
+        "L": (E*Iy*2)/Ls,
+        "M": (E*Iz*2)/Ls
+    }
+
+    def convertir(valor):
+        if valor == "0":
+            return 0.0
+        if valor.startswith("-"):
+            return -valores[valor[1:]]
+        return valores[valor]
+
+    return np.vectorize(convertir)(K_letras)
+
+for i in range(num_nodos - 1):
+
+    xi = nodos[i]
+    xj = nodos[i + 1]
+    Ls = xj - xi
+
+    # Si el segmento no existe (nodos coinciden)
+    if Ls <= 0:
+        continue
+
+    Ke = matriz_elemental(Ls)
+
+    # GDL globales del nodo i y i+1
+    dofs_i = np.arange(i*7, i*7 + 7)
+    dofs_j = np.arange((i+1)*7, (i+1)*7 + 7)
+
+    dofs = np.concatenate([dofs_i, dofs_j])
+
+    # Ensamblaje
+    for a in range(14):
+        for b in range(14):
+            K_global[dofs[a], dofs[b]] += Ke[a, b]
+
+labels_global = []
+for i in range(num_nodos):
+    labels_global += [
+        f"u{i+1}", f"v{i+1}", f"w{i+1}",
+        f"θx{i+1}", f"θy{i+1}", f"θz{i+1}", f"θ'x{i+1}"
+    ]
+
+df_K_global = pd.DataFrame(K_global, index=labels_global, columns=labels_global)
+df_K_global
+
+
+
+# -------------------------------
+# VECTOR DE CARGAS NODALES (63 x 1)
+# -------------------------------
+
+# Inicializar vector de fuerzas (7 DOF × num_nodos)
+F_global = np.zeros(ndof_total)
+
+# Carga distribuida (ya la tienes definida)
+# q = PESO * PA  # kN/m
+
+# -------------------------------
+# 1. CARGAS DISTRIBUIDAS EN ELEMENTOS
+# -------------------------------
+for i in range(num_nodos - 1):
+    xi = nodos[i]
+    xj = nodos[i + 1]
+    Ls = xj - xi
+    
+    if Ls <= 0:
+        continue
+    
+    # Componentes de la carga
+    qv = q * np.cos(alpha)  # Componente vertical de la carga
+    qh = q * np.sin(alpha)  # Componente horizontal de la carga
+    
+    # Fuerzas nodales equivalentes para carga distribuida
+    Fv_i = (qv * Ls) / 2
+    Fv_j = (qv * Ls) / 2
+    
+    Fh_i = (qh * Ls) / 2
+    Fh_j = (qh * Ls) / 2
+    
+    # Momentos en el plano
+    Mx_i = -(qv * Ls**2) / 12
+    Mx_j = (qv * Ls**2) / 12
+    
+    # Ensamblar en el vector global
+    dof_base_i = i * 7
+    dof_base_j = (i + 1) * 7
+    
+    # Nodo i
+    F_global[dof_base_i + 0] += Fh_i      # u (horizontal)
+    F_global[dof_base_i + 1] += Fv_i      # v (vertical)
+    F_global[dof_base_i + 3] += Mx_i      # θx (momento flexión)
+    
+    # Nodo j
+    F_global[dof_base_j + 0] += Fh_j      # u (horizontal)
+    F_global[dof_base_j + 1] += Fv_j      # v (vertical)
+    F_global[dof_base_j + 3] += Mx_j      # θx (momento flexión)
+
+# -------------------------------
+# 2. AGREGAR CARGAS DE IZAJE
+# -------------------------------
+# Definir la carga de izaje
+qizaje = PIZAJE # Fuerza total en cada punto de izaje [kN]
+
+# Aplicar carga de izaje en Nodo 3 (índice 2) - solo componente vertical
+F_global[2*7 + 1] += qizaje  # v3 (fuerza vertical hacia arriba, positiva)
+
+# Aplicar carga de izaje en Nodo 7 (índice 6) - solo componente vertical
+F_global[6*7 + 1] += qizaje  # v7 (fuerza vertical hacia arriba, positiva)
+
+# -------------------------------
+# VISUALIZACIÓN COMPLETA: 63 FILAS (9 nodos × 7 GDL)
+# -------------------------------
+print("\n" + "="*70)
+print("VECTOR DE CARGAS NODALES - MATRIZ 63×1")
+print("="*70)
+print(f"Dimensión de la matriz: {F_global.shape}")
+print(f"Carga de izaje aplicada: qizaje = {qizaje:.4f} kN en N3 y N7")
+print("="*70)
+print(f"{'Fila':<6} {'DOF':<8} {'Valor [kN o kN·m]':<20}")
+print("-"*70)
+
+for i in range(ndof_total):
+    nodo_num = (i // 7) + 1
+    gdl_local = i % 7
+    gdl_nombres = ["u", "v", "w", "θx", "θy", "θz", "θ'x"]
+    dof_label = f"{gdl_nombres[gdl_local]}{nodo_num}"
+    
+    # Marcar con asterisco los nodos de izaje
+    marca = ""
+    if (i == 2*7 + 1) or (i == 6*7 + 1):  # v3 o v7
+        marca = " ← IZAJE"
+    
+    print(f"{i+1:<6} {dof_label:<8} {F_global[i]:>19.4f}{marca}")
+
+# -------------------------------
+# TAMBIÉN COMO DATAFRAME
+# -------------------------------
+df_F_completo = pd.DataFrame({
+    "Fila": np.arange(1, ndof_total + 1),
+    "DOF": labels_global,
+    "Fuerza [kN] o Momento [kN·m]": F_global.round(4)
+})
+
+print("\n" + "="*70)
+print("FORMATO TABLA")
+print("="*70)
+print(df_F_completo.to_string(index=False))
+
+# -------------------------------
+# Resumen visual por nodos
+# -------------------------------
+print("\n" + "="*110)
+print("RESUMEN ORGANIZADO POR NODOS (9 nodos × 7 GDL cada uno)")
+print("="*110)
+print(f"{'Nodo':<8} {'u (kN)':<13} {'v (kN)':<13} {'w (kN)':<13} {'θx (kN·m)':<13} {'θy (kN·m)':<13} {'θz (kN·m)':<13} {'θ\\x (kN·m)':<13}")
+print("-"*110)
+
+for i in range(num_nodos):
+    base = i * 7
+    nodo_label = f"N{i+1}"
+    if i == 2 or i == 6:  # Marcar nodos de izaje
+        nodo_label += " (izaje)"
+    
+    print(f"{nodo_label:<8} "
+          f"{F_global[base+0]:>12.4f} "
+          f"{F_global[base+1]:>12.4f} "
+          f"{F_global[base+2]:>12.4f} "
+          f"{F_global[base+3]:>12.4f} "
+          f"{F_global[base+4]:>12.4f} "
+          f"{F_global[base+5]:>12.4f} "
+          f"{F_global[base+6]:>12.4f}")
+
+print("\nTotal de GDL: {} (9 nodos × 7 GDL/nodo)".format(ndof_total))
+
+
+
+# -------------------------------
+# CONDICIONES DE FRONTERA
+# -------------------------------
+# Los puntos de izaje no tienen desplazamiento vertical
+# Nodo 3 (índice 2): v3 restringido
+# Nodo 7 (índice 6): v7 restringido
+
+dofs_restringidos = [
+    2*7 + 1,  # v3 (vertical en nodo 3 - punto de izaje)
+    6*7 + 1,  # v7 (vertical en nodo 7 - punto de izaje)
+]
+
+# Todos los DOF libres (los que no están restringidos)
+dofs_libres = np.setdiff1d(np.arange(ndof_total), dofs_restringidos)
+
+print("\n" + "="*70)
+print("CONDICIONES DE FRONTERA")
+print("="*70)
+print(f"Total de GDL: {ndof_total}")
+print(f"GDL restringidos: {len(dofs_restringidos)}")
+print(f"GDL libres: {len(dofs_libres)}")
+print("\nGDL restringidos:")
+for dof in dofs_restringidos:
+    print(f"  - Fila {dof+1}: {labels_global[dof]} = 0 (sin desplazamiento)")
+
+# -------------------------------
+# PARTICIONAR LA MATRIZ DE RIGIDEZ Y VECTOR DE CARGAS
+# -------------------------------
+# Extraer submatrices
+K_libre = K_global[np.ix_(dofs_libres, dofs_libres)]
+F_libre = F_global[dofs_libres]
+
+print("\n" + "="*70)
+print("SISTEMA REDUCIDO")
+print("="*70)
+print(f"Matriz de rigidez reducida K_libre: {K_libre.shape}")
+print(f"Vector de cargas reducido F_libre: {F_libre.shape}")
+
+# -------------------------------
+# RESOLVER EL SISTEMA: K_libre * u_libre = F_libre
+# -------------------------------
+print("\n" + "="*70)
+print("RESOLVIENDO SISTEMA DE ECUACIONES...")
+print("="*70)
+
+u_libre = np.linalg.solve(K_libre, F_libre)
+
+print(f"✓ Sistema resuelto exitosamente")
+print(f"  Desplazamientos libres calculados: {u_libre.shape}")
+
+# -------------------------------
+# ENSAMBLAR VECTOR COMPLETO DE DESPLAZAMIENTOS (63×1)
+# -------------------------------
+u_global = np.zeros(ndof_total)
+u_global[dofs_libres] = u_libre
+# Los DOF restringidos quedan en cero (v3=0, v7=0)
+
+# -------------------------------
+# VISUALIZACIÓN DE DESPLAZAMIENTOS
+# -------------------------------
+print("\n" + "="*70)
+print("VECTOR DE DESPLAZAMIENTOS - MATRIZ 63×1")
+print("="*70)
+print(f"{'Fila':<6} {'DOF':<8} {'Desplazamiento':<20} {'Unidad':<10}")
+print("-"*70)
+
+for i in range(ndof_total):
+    nodo_num = (i // 7) + 1
+    gdl_local = i % 7
+    gdl_nombres = ["u", "v", "w", "θx", "θy", "θz", "θ'x"]
+    dof_label = f"{gdl_nombres[gdl_local]}{nodo_num}"
+    
+    # Determinar unidad
+    if gdl_local in [0, 1, 2]:  # u, v, w
+        unidad = "m"
+    else:  # rotaciones
+        unidad = "rad"
+    
+    # Marcar DOF restringidos
+    marca = ""
+    if i in dofs_restringidos:
+        marca = " ← RESTRINGIDO"
+    
+    print(f"{i+1:<6} {dof_label:<8} {u_global[i]:>19.6e} {unidad:<10}{marca}")
+
+# -------------------------------
+# RESUMEN POR NODOS
+# -------------------------------
+print("\n" + "="*130)
+print("DESPLAZAMIENTOS ORGANIZADOS POR NODOS")
+print("="*130)
+print(f"{'Nodo':<8} {'u (m)':<15} {'v (m)':<15} {'w (m)':<15} {'θx (rad)':<15} {'θy (rad)':<15} {'θz (rad)':<15} {'θ\\x (rad)':<15}")
+print("-"*130)
+
+for i in range(num_nodos):
+    base = i * 7
+    nodo_label = f"N{i+1}"
+    if i == 2 or i == 6:  # Marcar nodos de izaje
+        nodo_label += " *"
+    
+    print(f"{nodo_label:<8} "
+          f"{u_global[base+0]:>14.6e} "
+          f"{u_global[base+1]:>14.6e} "
+          f"{u_global[base+2]:>14.6e} "
+          f"{u_global[base+3]:>14.6e} "
+          f"{u_global[base+4]:>14.6e} "
+          f"{u_global[base+5]:>14.6e} "
+          f"{u_global[base+6]:>14.6e}")
+
+print("\n* = Puntos de izaje (v3=0, v7=0)")
+
+# -------------------------------
+# DESPLAZAMIENTOS MÁXIMOS
+# -------------------------------
+print("\n" + "="*70)
+print("DESPLAZAMIENTOS MÁXIMOS")
+print("="*70)
+
+# Desplazamientos verticales (v)
+v_values = [u_global[i*7 + 1] for i in range(num_nodos)]
+max_v_idx = np.argmax(np.abs(v_values))
+print(f"Máximo desplazamiento vertical:")
+print(f"  Nodo N{max_v_idx+1}: v = {v_values[max_v_idx]:.6e} m")
+
+# Desplazamientos horizontales (u)
+u_values = [u_global[i*7 + 0] for i in range(num_nodos)]
+max_u_idx = np.argmax(np.abs(u_values))
+print(f"\nMáximo desplazamiento horizontal:")
+print(f"  Nodo N{max_u_idx+1}: u = {u_values[max_u_idx]:.6e} m")
+
+# Rotaciones θx
+theta_x_values = [u_global[i*7 + 3] for i in range(num_nodos)]
+max_theta_idx = np.argmax(np.abs(theta_x_values))
+print(f"\nMáxima rotación θx:")
+print(f"  Nodo N{max_theta_idx+1}: θx = {theta_x_values[max_theta_idx]:.6e} rad")
+
+
+# -------------------------------
+# CÁLCULO DE ESFUERZOS EN CADA NODO
+# -------------------------------
+
+print("\n" + "="*100)
+print("CÁLCULO DE ESFUERZOS INTERNOS EN CADA NODO")
+print("="*100)
+
+# Inicializar matriz de esfuerzos nodales (9 nodos × 7 esfuerzos)
+# Esfuerzos: [N, Vy, Vz, Tx, My, Mz, Bx]
+esfuerzos_nodales = np.zeros((num_nodos, 7))
+
+# -------------------------------
+# CALCULAR ESFUERZOS NODO POR NODO
+# -------------------------------
+for i_nodo in range(num_nodos):
+    
+    # Inicializar acumulador de fuerzas en el nodo
+    F_nodo = np.zeros(7)
+    
+    # -------------------------------
+    # Contribución del elemento a la IZQUIERDA (si existe)
+    # -------------------------------
+    if i_nodo > 0:  # Si no es el primer nodo
+        i_elem = i_nodo - 1  # Índice del elemento a la izquierda
+        xi = nodos[i_elem]
+        xj = nodos[i_elem + 1]
+        Ls = xj - xi
+        
+        if Ls > 0:
+            # Extraer desplazamientos del elemento
+            dofs_i = np.arange(i_elem*7, i_elem*7 + 7)
+            dofs_j = np.arange((i_elem+1)*7, (i_elem+1)*7 + 7)
+            u_elemento = np.concatenate([u_global[dofs_i], u_global[dofs_j]])
+            
+            # Calcular fuerzas internas del elemento
+            Ke = matriz_elemental(Ls)
+            F_interno = Ke @ u_elemento
+            
+            # Extraer fuerzas en el nodo j del elemento (que corresponde al nodo actual)
+            F_nodo += F_interno[7:14]  # Fuerzas en el extremo derecho del elemento
+    
+    # -------------------------------
+    # Contribución del elemento a la DERECHA (si existe)
+    # -------------------------------
+    if i_nodo < num_nodos - 1:  # Si no es el último nodo
+        i_elem = i_nodo  # Índice del elemento a la derecha
+        xi = nodos[i_elem]
+        xj = nodos[i_elem + 1]
+        Ls = xj - xi
+        
+        if Ls > 0:
+            # Extraer desplazamientos del elemento
+            dofs_i = np.arange(i_elem*7, i_elem*7 + 7)
+            dofs_j = np.arange((i_elem+1)*7, (i_elem+1)*7 + 7)
+            u_elemento = np.concatenate([u_global[dofs_i], u_global[dofs_j]])
+            
+            # Calcular fuerzas internas del elemento
+            Ke = matriz_elemental(Ls)
+            F_interno = Ke @ u_elemento
+            
+            # Extraer fuerzas en el nodo i del elemento (que corresponde al nodo actual)
+            # NOTA: Cambiar signo porque estamos mirando desde el otro lado
+            F_nodo -= F_interno[0:7]  # Fuerzas en el extremo izquierdo del elemento
+    
+    # Guardar esfuerzos del nodo
+    esfuerzos_nodales[i_nodo, :] = F_nodo
+
+# -------------------------------
+# CREAR DATAFRAME CON LOS RESULTADOS
+# -------------------------------
+df_esfuerzos_nodos = pd.DataFrame(
+    esfuerzos_nodales,
+    columns=['N (kN)', 'Vy (kN)', 'Vz (kN)', 'Tx (kN·m)', 'My (kN·m)', 'Mz (kN·m)', 'Bx (kN·m²)'],
+    index=[f'N{i+1}' for i in range(num_nodos)]
+)
+
+df_esfuerzos_nodos.insert(0, 'Posición (m)', nodos)
+
+print("\n" + "="*140)
+print("TABLA DE ESFUERZOS EN CADA NODO")
+print("="*140)
+print(df_esfuerzos_nodos.to_string())
+
+# -------------------------------
+# FORMATO ALTERNATIVO: LISTA COMPLETA
+# -------------------------------
+print("\n" + "="*100)
+print("ESFUERZOS NODALES - FORMATO DETALLADO")
+print("="*100)
+print(f"{'Nodo':<8} {'Posición (m)':<15} {'N (kN)':<12} {'Vy (kN)':<12} {'Vz (kN)':<12} {'Tx (kN·m)':<12} {'My (kN·m)':<12} {'Mz (kN·m)':<12}")
+print("-"*100)
+
+for i in range(num_nodos):
+    nodo_label = f"N{i+1}"
+    if i == 2 or i == 6:  # Marcar nodos de izaje
+        nodo_label += " *"
+    
+    print(f"{nodo_label:<8} "
+          f"{nodos[i]:>14.3f} "
+          f"{esfuerzos_nodales[i, 0]:>11.4f} "
+          f"{esfuerzos_nodales[i, 1]:>11.4f} "
+          f"{esfuerzos_nodales[i, 2]:>11.4f} "
+          f"{esfuerzos_nodales[i, 3]:>11.4f} "
+          f"{esfuerzos_nodales[i, 4]:>11.4f} "
+          f"{esfuerzos_nodales[i, 5]:>11.4f}")
+
+print("\n* = Puntos de izaje")
+
+# -------------------------------
+# ESFUERZOS MÁXIMOS
+# -------------------------------
+print("\n" + "="*70)
+print("ESFUERZOS MÁXIMOS EN LOS NODOS")
+print("="*70)
+
+max_N_idx = np.argmax(np.abs(esfuerzos_nodales[:, 0]))
+max_Vy_idx = np.argmax(np.abs(esfuerzos_nodales[:, 1]))
+max_My_idx = np.argmax(np.abs(esfuerzos_nodales[:, 4]))
+max_Mz_idx = np.argmax(np.abs(esfuerzos_nodales[:, 5]))
+max_Tx_idx = np.argmax(np.abs(esfuerzos_nodales[:, 3]))
+
+print(f"Máxima fuerza axial (N):")
+print(f"  Nodo N{max_N_idx+1}: {esfuerzos_nodales[max_N_idx, 0]:.4f} kN")
+
+print(f"\nMáximo cortante vertical (Vy):")
+print(f"  Nodo N{max_Vy_idx+1}: {esfuerzos_nodales[max_Vy_idx, 1]:.4f} kN")
+
+print(f"\nMáximo momento flector My:")
+print(f"  Nodo N{max_My_idx+1}: {esfuerzos_nodales[max_My_idx, 4]:.4f} kN·m")
+
+print(f"\nMáximo momento flector Mz:")
+print(f"  Nodo N{max_Mz_idx+1}: {esfuerzos_nodales[max_Mz_idx, 5]:.4f} kN·m")
+
+print(f"\nMáximo momento torsor (Tx):")
+print(f"  Nodo N{max_Tx_idx+1}: {esfuerzos_nodales[max_Tx_idx, 3]:.4f} kN·m")
+
+# -------------------------------
+# GRÁFICOS DE DIAGRAMAS POR NODO
+# -------------------------------
+print("\n" + "="*70)
+print("GENERANDO DIAGRAMAS...")
+print("="*70)
+
+fig, axes = plt.subplots(4, 1, figsize=(16, 12))
+
+# Diagrama de fuerza axial
+axes[0].plot(nodos, esfuerzos_nodales[:, 0], 'o-', linewidth=2.5, markersize=8, color='blue', label='Fuerza Axial N')
+axes[0].axhline(y=0, color='k', linestyle='--', linewidth=0.8, alpha=0.5)
+axes[0].fill_between(nodos, esfuerzos_nodales[:, 0], alpha=0.3, color='blue')
+axes[0].set_ylabel('N (kN)', fontweight='bold', fontsize=11)
+axes[0].set_title('Diagrama de Fuerza Axial en Nodos', fontweight='bold', fontsize=13)
+axes[0].grid(True, alpha=0.3)
+axes[0].legend()
+
+# Diagrama de cortante vertical
+axes[1].plot(nodos, esfuerzos_nodales[:, 1], 's-', linewidth=2.5, markersize=8, color='red', label='Cortante Vy')
+axes[1].axhline(y=0, color='k', linestyle='--', linewidth=0.8, alpha=0.5)
+axes[1].fill_between(nodos, esfuerzos_nodales[:, 1], alpha=0.3, color='red')
+axes[1].set_ylabel('Vy (kN)', fontweight='bold', fontsize=11)
+axes[1].set_title('Diagrama de Fuerza Cortante Vertical en Nodos', fontweight='bold', fontsize=13)
+axes[1].grid(True, alpha=0.3)
+axes[1].legend()
+
+# Diagrama de momento flector My
+axes[2].plot(nodos, esfuerzos_nodales[:, 4], '^-', linewidth=2.5, markersize=8, color='green', label='Momento My')
+axes[2].axhline(y=0, color='k', linestyle='--', linewidth=0.8, alpha=0.5)
+axes[2].fill_between(nodos, esfuerzos_nodales[:, 4], alpha=0.3, color='green')
+axes[2].set_ylabel('My (kN·m)', fontweight='bold', fontsize=11)
+axes[2].set_title('Diagrama de Momento Flector My en Nodos', fontweight='bold', fontsize=13)
+axes[2].grid(True, alpha=0.3)
+axes[2].legend()
+
+# Diagrama de momento torsor
+axes[3].plot(nodos, esfuerzos_nodales[:, 3], 'd-', linewidth=2.5, markersize=8, color='purple', label='Torsor Tx')
+axes[3].axhline(y=0, color='k', linestyle='--', linewidth=0.8, alpha=0.5)
+axes[3].fill_between(nodos, esfuerzos_nodales[:, 3], alpha=0.3, color='purple')
+axes[3].set_ylabel('Tx (kN·m)', fontweight='bold', fontsize=11)
+axes[3].set_xlabel('Posición a lo largo de la viga (m)', fontweight='bold', fontsize=11)
+axes[3].set_title('Diagrama de Momento Torsor en Nodos', fontweight='bold', fontsize=13)
+axes[3].grid(True, alpha=0.3)
+axes[3].legend()
+
+# Marcar puntos de izaje en todos los gráficos
+for ax in axes:
+    ax.axvline(x=nodos[2], color='orange', linestyle=':', linewidth=2, alpha=0.7, label='Izaje')
+    ax.axvline(x=nodos[6], color='orange', linestyle=':', linewidth=2, alpha=0.7)
+
+plt.tight_layout()
+plt.show()
+
+print("✓ Diagramas generados exitosamente")
+
+
