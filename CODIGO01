@@ -299,10 +299,10 @@ F_global[6*7 + 1] += qizaje  # v7 (fuerza vertical hacia arriba, positiva)
 # VISUALIZACIÓN COMPLETA: 63 FILAS (9 nodos × 7 GDL)
 # -------------------------------
 print("\n" + "="*70)
-print("VECTOR DE CARGAS NODALES - MATRIZ 63×1")
+print("VECTOR DE CARGAS NODALES - MATRIZ 63x1")
 print("="*70)
 print(f"Dimensión de la matriz: {F_global.shape}")
-print(f"Carga de izaje aplicada: qizaje = {qizaje:.4f} kN en N3 y N7")
+print(f"Carga de izaje aplicada: qizaje = {qizaje:.4f} Ton en N3 y N7")
 print("="*70)
 print(f"{'Fila':<6} {'DOF':<8} {'Valor [kN o kN·m]':<20}")
 print("-"*70)
@@ -636,6 +636,8 @@ print(f"  Nodo N{max_Mz_idx+1}: {esfuerzos_nodales[max_Mz_idx, 5]:.4f} kN·m")
 print(f"\nMáximo momento torsor (Tx):")
 print(f"  Nodo N{max_Tx_idx+1}: {esfuerzos_nodales[max_Tx_idx, 3]:.4f} kN·m")
 
+
+
 # -------------------------------
 # GRÁFICOS DE DIAGRAMAS POR NODO
 # -------------------------------
@@ -692,4 +694,325 @@ plt.show()
 
 print("✓ Diagramas generados exitosamente")
 
+
+
+# -------------------------------
+# GEOMETRÍA DE LA SECCIÓN PCI TIPO VI
+# -------------------------------
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.patches import Polygon
+from matplotlib.collections import PatchCollection
+
+# Dimensiones de la sección VI en METROS (convertidas de pulgadas)
+# 1 pulgada = 0.0254 metros
+
+D1 = 72.0 * 0.0254   # 1.8288 m
+D2 = 5.0 * 0.0254    # 0.127 m
+D3 = 3.0 * 0.0254    # 0.0762 m
+D4 = 4.0 * 0.0254    # 0.1016 m
+D5 = 10.0 * 0.0254   # 0.254 m
+D6 = 8.0 * 0.0254    # 0.2032 m
+
+B1 = 42.0 * 0.0254   # 1.0668 m
+B2 = 28.0 * 0.0254   # 0.7112 m
+B3 = 8.0 * 0.0254    # 0.2032 m
+B4 = 4.0 * 0.0254    # 0.1016 m
+B5 = 13.0 * 0.0254   # 0.3302 m
+B6 = 10.0 * 0.0254   # 0.254 m
+
+print("\n" + "="*70)
+print("DIMENSIONES DE LA SECCIÓN PCI TIPO VI")
+print("="*70)
+print(f"Altura total (D1):        {D1:.4f} m")
+print(f"Ancho superior (B1):      {B1:.4f} m")
+print(f"Ancho inferior (B2):      {B2:.4f} m")
+print(f"Ancho del alma:           {B3:.4f} m")
+
+# -------------------------------
+# DEFINIR COORDENADAS DE LA SECCIÓN
+# -------------------------------
+def crear_seccion_VI():
+    """
+    Crea las coordenadas de los vértices de la sección tipo VI
+    El origen está en el centroide (aproximadamente a mitad de altura)
+    """
+    
+    # Centroide aproximado (ajustar según necesites)
+    y_centroide = D1 / 2
+    
+    # Coordenadas de los vértices (en sentido antihorario)
+    # Parte superior (ala superior)
+    vertices = []
+    
+    # Ala superior
+    x1 = -B1/2
+    x2 = B1/2
+    y_top = D1 - y_centroide
+    
+    # Empezar desde esquina superior izquierda
+    vertices.append([x1, y_top])
+    vertices.append([x2, y_top])
+    
+    # Transición derecha superior
+    vertices.append([x2, y_top - D2])
+    vertices.append([x2 - (B1-B2)/2 + B3/2, y_top - D2 - D3])
+    
+    # Alma derecha
+    vertices.append([B3/2, y_top - D2 - D3])
+    vertices.append([B3/2, -y_centroide + D6 + D5])
+    
+    # Transición derecha inferior
+    vertices.append([B3/2 + B4, -y_centroide + D6 + D5])
+    vertices.append([B2/2, -y_centroide + D6])
+    
+    # Ala inferior derecha
+    vertices.append([B2/2, -y_centroide])
+    vertices.append([-B2/2, -y_centroide])
+    
+    # Transición izquierda inferior
+    vertices.append([-B2/2, -y_centroide + D6])
+    vertices.append([-(B3/2 + B4), -y_centroide + D6 + D5])
+    
+    # Alma izquierda
+    vertices.append([-B3/2, -y_centroide + D6 + D5])
+    vertices.append([-B3/2, y_top - D2 - D3])
+    
+    # Transición izquierda superior
+    vertices.append([-(x2 - (B1-B2)/2 + B3/2), y_top - D2 - D3])
+    vertices.append([x1, y_top - D2])
+    
+    return np.array(vertices)
+
+# -------------------------------
+# FUNCIÓN PARA CALCULAR ESFUERZOS EN LA SECCIÓN
+# -------------------------------
+def calcular_esfuerzos_seccion(N, Vy, My, Mz, nodo_num, vertices):
+    """
+    Calcula esfuerzos normales en la sección transversal
+    σ = N/A + My*z/Iy - Mz*y/Iz
+    
+    Parámetros:
+    - N: Fuerza axial (kN)
+    - Vy: Cortante vertical (kN)
+    - My: Momento flector respecto a y (kN·m)
+    - Mz: Momento flector respecto a z (kN·m)
+    - nodo_num: Número del nodo
+    - vertices: Coordenadas de la sección
+    """
+    
+    # Propiedades geométricas (ya las tienes definidas)
+    A = PA  # Área
+    Iy = PIF  # Momento de inercia respecto a y
+    Iz = PID  # Momento de inercia respecto a z
+    
+    # Crear una malla de puntos en la sección
+    y_min, y_max = vertices[:, 1].min(), vertices[:, 1].max()
+    z_min, z_max = vertices[:, 0].min(), vertices[:, 0].max()
+    
+    # Número de puntos en la malla
+    n_points = 100
+    y_grid = np.linspace(y_min, y_max, n_points)
+    z_grid = np.linspace(z_min, z_max, n_points)
+    
+    Z, Y = np.meshgrid(z_grid, y_grid)
+    
+    # Calcular esfuerzos normales en cada punto
+    # σ = N/A + My*z/Iy - Mz*y/Iz
+    # Nota: My genera esfuerzos que varían con z, Mz genera esfuerzos que varían con y
+    
+    sigma = (N * 1000) / A + (My * 1000000) * Z / Iy - (Mz * 1000000) * Y / Iz
+    # Conversión: kN → N, kN·m → N·mm
+    # Resultado en MPa (N/mm²)
+    sigma = sigma / 1000000  # Pa → MPa
+    
+    # Crear máscara para puntos dentro de la sección
+    from matplotlib.path import Path
+    path = Path(vertices)
+    points = np.column_stack([Z.ravel(), Y.ravel()])
+    mask = path.contains_points(points).reshape(Z.shape)
+    
+    # Aplicar máscara
+    sigma_masked = np.ma.masked_where(~mask, sigma)
+    
+    return Z, Y, sigma_masked, mask
+
+# -------------------------------
+# FUNCIÓN PARA GRAFICAR ESFUERZOS EN UN NODO
+# -------------------------------
+def graficar_esfuerzos_nodo(nodo_idx, esfuerzos_nodales, nodos):
+    """
+    Grafica la distribución de esfuerzos en la sección del nodo
+    """
+    
+    # Extraer esfuerzos del nodo
+    N = esfuerzos_nodales[nodo_idx, 0]    # kN
+    Vy = esfuerzos_nodales[nodo_idx, 1]   # kN
+    Vz = esfuerzos_nodales[nodo_idx, 2]   # kN
+    Tx = esfuerzos_nodales[nodo_idx, 3]   # kN·m
+    My = esfuerzos_nodales[nodo_idx, 4]   # kN·m
+    Mz = esfuerzos_nodales[nodo_idx, 5]   # kN·m
+    
+    # Crear geometría de la sección
+    vertices = crear_seccion_VI()
+    
+    # Calcular esfuerzos
+    Z, Y, sigma, mask = calcular_esfuerzos_seccion(N, Vy, My, Mz, nodo_idx+1, vertices)
+    
+    # Crear figura
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 8))
+    
+    # -------------------------------
+    # Gráfico 1: Contorno de esfuerzos
+    # -------------------------------
+    
+    # Dibujar contorno de la sección
+    polygon = Polygon(vertices, fill=False, edgecolor='black', linewidth=2)
+    ax1.add_patch(polygon)
+    
+    # Graficar esfuerzos
+    levels = np.linspace(sigma.min(), sigma.max(), 20)
+    contour = ax1.contourf(Z, Y, sigma, levels=levels, cmap='RdBu_r', extend='both')
+    
+    # Línea de esfuerzo cero (eje neutro)
+    ax1.contour(Z, Y, sigma, levels=[0], colors='black', linewidths=2, linestyles='--')
+    
+    # Colorbar
+    cbar = plt.colorbar(contour, ax=ax1, label='Esfuerzo Normal σ (MPa)')
+    
+    # Etiquetas
+    ax1.set_xlabel('z (m)', fontweight='bold', fontsize=11)
+    ax1.set_ylabel('y (m)', fontweight='bold', fontsize=11)
+    ax1.set_title(f'Distribución de Esfuerzos - Nodo N{nodo_idx+1}\n'
+                  f'Posición: {nodos[nodo_idx]:.2f} m', 
+                  fontweight='bold', fontsize=13)
+    ax1.set_aspect('equal')
+    ax1.grid(True, alpha=0.3)
+    
+    # -------------------------------
+    # Gráfico 2: Esfuerzos en 3D
+    # -------------------------------
+    ax2 = fig.add_subplot(122, projection='3d')
+    
+    # Superficie 3D de esfuerzos
+    surf = ax2.plot_surface(Z, Y, sigma, cmap='RdBu_r', 
+                           edgecolor='none', alpha=0.8)
+    
+    # Contorno de la sección en z=0
+    for i in range(len(vertices)):
+        j = (i + 1) % len(vertices)
+        ax2.plot([vertices[i, 0], vertices[j, 0]], 
+                [vertices[i, 1], vertices[j, 1]], 
+                [0, 0], 'k-', linewidth=2)
+    
+    # Etiquetas
+    ax2.set_xlabel('z (m)', fontweight='bold')
+    ax2.set_ylabel('y (m)', fontweight='bold')
+    ax2.set_zlabel('σ (MPa)', fontweight='bold')
+    ax2.set_title(f'Esfuerzos 3D - Nodo N{nodo_idx+1}', fontweight='bold')
+    
+    # Colorbar
+    fig.colorbar(surf, ax=ax2, shrink=0.5, aspect=5)
+    
+    # -------------------------------
+    # Información de esfuerzos
+    # -------------------------------
+    info_text = f"""
+    ESFUERZOS EN EL NODO N{nodo_idx+1}:
+    
+    Fuerza Axial (N):        {N:>10.4f} kN
+    Cortante Vy:             {Vy:>10.4f} kN
+    Cortante Vz:             {Vz:>10.4f} kN
+    Momento My:              {My:>10.4f} kN·m
+    Momento Mz:              {Mz:>10.4f} kN·m
+    
+    Esfuerzo máximo:         {sigma.max():>10.4f} MPa
+    Esfuerzo mínimo:         {sigma.min():>10.4f} MPa
+    """
+    
+    fig.text(0.5, 0.02, info_text, ha='center', fontsize=10, 
+             family='monospace', bbox=dict(boxstyle='round', 
+             facecolor='wheat', alpha=0.5))
+    
+    plt.tight_layout(rect=[0, 0.12, 1, 1])
+    
+    return fig
+
+# -------------------------------
+# GENERAR GRÁFICOS PARA TODOS LOS NODOS
+# -------------------------------
+print("\n" + "="*70)
+print("GENERANDO DIAGRAMAS DE ESFUERZOS EN SECCIONES...")
+print("="*70)
+
+# Puedes seleccionar qué nodos graficar
+nodos_a_graficar = [0, 2, 4, 6, 8]  # N1, N3, N5, N7, N9
+
+for idx in nodos_a_graficar:
+    print(f"\nGenerando diagrama para Nodo N{idx+1}...")
+    fig = graficar_esfuerzos_nodo(idx, esfuerzos_nodales, nodos)
+    plt.show()
+    
+print("\n✓ Todos los diagramas generados exitosamente")
+
+# -------------------------------
+# FUNCIÓN PARA GRAFICAR COMPARACIÓN DE MÚLTIPLES NODOS
+# -------------------------------
+def graficar_comparacion_nodos(nodos_idx, esfuerzos_nodales, nodos):
+    """
+    Grafica comparación de esfuerzos en múltiples nodos
+    """
+    
+    n_nodos = len(nodos_idx)
+    fig, axes = plt.subplots(2, (n_nodos+1)//2, figsize=(5*n_nodos, 10))
+    axes = axes.flatten()
+    
+    for i, nodo_idx in enumerate(nodos_idx):
+        # Extraer esfuerzos
+        N = esfuerzos_nodales[nodo_idx, 0]
+        My = esfuerzos_nodales[nodo_idx, 4]
+        Mz = esfuerzos_nodales[nodo_idx, 5]
+        Vy = esfuerzos_nodales[nodo_idx, 1]
+        
+        # Crear sección
+        vertices = crear_seccion_VI()
+        Z, Y, sigma, mask = calcular_esfuerzos_seccion(N, Vy, My, Mz, nodo_idx+1, vertices)
+        
+        # Graficar
+        ax = axes[i]
+        polygon = Polygon(vertices, fill=False, edgecolor='black', linewidth=1.5)
+        ax.add_patch(polygon)
+        
+        levels = np.linspace(-50, 50, 20)  # Ajustar según tus valores
+        contour = ax.contourf(Z, Y, sigma, levels=levels, cmap='RdBu_r', extend='both')
+        ax.contour(Z, Y, sigma, levels=[0], colors='black', linewidths=1.5, linestyles='--')
+        
+        ax.set_title(f'N{nodo_idx+1} ({nodos[nodo_idx]:.1f} m)', fontweight='bold')
+        ax.set_xlabel('z (m)')
+        ax.set_ylabel('y (m)')
+        ax.set_aspect('equal')
+        ax.grid(True, alpha=0.2)
+        
+        # Colorbar individual
+        plt.colorbar(contour, ax=ax, label='σ (MPa)')
+    
+    # Ocultar ejes sobrantes
+    for i in range(len(nodos_idx), len(axes)):
+        axes[i].axis('off')
+    
+    plt.suptitle('COMPARACIÓN DE ESFUERZOS EN DIFERENTES NODOS', 
+                 fontweight='bold', fontsize=14, y=0.98)
+    plt.tight_layout()
+    
+    return fig
+
+# Generar comparación
+print("\n" + "="*70)
+print("GENERANDO COMPARACIÓN DE NODOS...")
+print("="*70)
+
+fig_comp = graficar_comparacion_nodos([0, 2, 4, 6, 8], esfuerzos_nodales, nodos)
+plt.show()
+
+print("\n✓ Comparación generada exitosamente")
 
