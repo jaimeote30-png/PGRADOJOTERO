@@ -9,22 +9,22 @@ import matplotlib.pyplot as plt
 ## PARA EVITAR CONFUSIONES TODAS MAS MEDIDAS DE LONGITUD SON EN METROS
 
 ##-----------------------------------------##
-LTOTAL=35
-PIZAJE= 200 # Ton
+LTOTAL=40
+PIZAJE= 0 # Ton
 SXNVIGA= "VI"
 PA=0.7
 PEN= 0.924
 PIF=0.30523
 PID=0.02563
-PESO=16.49  # kN/m
+PESO=16.8  # kN/m
 PTOR= 0.01555 #m^4
-PCW= 2
+PCW= 0.00653 #m^6
 fc=49 # MPa
 
 # -------------------------------
 # Ángulo de inclinación de la viga
 # -------------------------------
-Grados = 10                # Ángulo en grados (entrada del modelo)
+Grados = 1.93743                # Ángulo en grados (entrada del modelo)
 alpha = np.deg2rad(Grados) # Conversión a radianes
 
 ##-----------------------------------------##
@@ -34,9 +34,25 @@ alpha = np.deg2rad(Grados) # Conversión a radianes
 #DEFINIR NODOS Y POSICIONES
 
 ##-----------------------------------------##
-a_L = 0.2       # Relación a/L
+a_L = 0.05       # Relación a/L
 h = 1.8         # Distancia h desde los puntos de izaje (m)
 ##-----------------------------------------##
+
+# =====================================================================
+# PARÁMETROS DE PRETENSADO
+# =====================================================================
+CONSIDERAR_PRETENSADO = True  # True/False para activar/desactivar
+
+P_pretensado = 10000  # kN - Fuerza de pretensado
+e_pretensado = 0.65  # m  - Excentricidad en el centro
+
+print(f"\nPretensado: {'ACTIVADO' if CONSIDERAR_PRETENSADO else 'DESACTIVADO'}")
+if CONSIDERAR_PRETENSADO:
+    print(f"  P = {P_pretensado} kN")
+    print(f"  e = {e_pretensado} m")
+
+
+
 
 
 
@@ -243,6 +259,144 @@ F_global = np.zeros(ndof_total)
 # Carga distribuida (ya la tienes definida)
 # q = PESO * PA  # kN/m
 
+# =====================================================================
+# CÁLCULO DE FUERZAS DE PRETENSADO
+# =====================================================================
+F_pretensado = np.zeros(ndof_total)
+
+if CONSIDERAR_PRETENSADO:
+    print("\n" + "="*70)
+    print("CALCULANDO FUERZAS DE PRETENSADO")
+    print("="*70)
+    
+    L = LTOTAL
+    P = P_pretensado
+    e = e_pretensado
+    
+    # 1. Fuerzas axiales en extremos
+    F_pretensado[0 * 7 + 0] = P      # u1 = +P
+    F_pretensado[8 * 7 + 0] = -P     # u9 = -P
+    print(f"✓ Fuerzas axiales: N1: +{P} kN, N9: -{P} kN")
+    
+    # 2. Fuerzas verticales en extremos
+    F_vert_extremo = 3 * P * e / L
+    F_pretensado[0 * 7 + 1] = F_vert_extremo  # v1
+    F_pretensado[8 * 7 + 1] = F_vert_extremo  # v9
+    print(f"✓ Fuerzas verticales extremos: {F_vert_extremo:.4f} kN")
+    
+    # 3. Transferir cargas en L/3 y 2L/3
+    pos_carga_izq = L / 3
+    pos_carga_der = 2 * L / 3
+    P_carga = 3 * P * e / L
+    
+    # Carga izquierda
+    tolerancia = 1e-6
+    nodos_izq_L3 = nodos[nodos <= pos_carga_izq]
+    nodos_der_L3 = nodos[nodos >= pos_carga_izq]
+    
+    if len(nodos_izq_L3) > 0 and len(nodos_der_L3) > 0:
+        idx_izq_i = len(nodos_izq_L3) - 1
+        idx_der_i = len(nodos_izq_L3)
+        pos_izq_i = nodos[idx_izq_i]
+        pos_der_i = nodos[idx_der_i]
+        
+        if abs(pos_carga_izq - pos_izq_i) < tolerancia:
+            F_pretensado[idx_izq_i * 7 + 1] += P_carga
+        elif abs(pos_carga_izq - pos_der_i) < tolerancia:
+            F_pretensado[idx_der_i * 7 + 1] += P_carga
+        else:
+            a_i = pos_carga_izq - pos_izq_i
+            b_i = pos_der_i - pos_carga_izq
+            L_elem_i = pos_der_i - pos_izq_i
+            
+            v_izq = P_carga * (b_i**2) * (3*a_i + b_i) / (L_elem_i**3)
+            v_der = P_carga * (a_i**2) * (a_i + 3*b_i) / (L_elem_i**3)
+            M_izq = P_carga * a_i * (b_i**2) / (L_elem_i**2)
+            M_der = -P_carga * (a_i**2) * b_i / (L_elem_i**2)
+            
+            F_pretensado[idx_izq_i * 7 + 1] += v_izq
+            F_pretensado[idx_izq_i * 7 + 3] += M_izq
+            F_pretensado[idx_der_i * 7 + 1] += v_der
+            F_pretensado[idx_der_i * 7 + 3] += M_der
+    
+    # Carga derecha
+    nodos_izq_2L3 = nodos[nodos <= pos_carga_der]
+    nodos_der_2L3 = nodos[nodos >= pos_carga_der]
+    
+    if len(nodos_izq_2L3) > 0 and len(nodos_der_2L3) > 0:
+        idx_izq_d = len(nodos_izq_2L3) - 1
+        idx_der_d = len(nodos_izq_2L3)
+        pos_izq_d = nodos[idx_izq_d]
+        pos_der_d = nodos[idx_der_d]
+        
+        if abs(pos_carga_der - pos_izq_d) < tolerancia:
+            F_pretensado[idx_izq_d * 7 + 1] += P_carga
+        elif abs(pos_carga_der - pos_der_d) < tolerancia:
+            F_pretensado[idx_der_d * 7 + 1] += P_carga
+        else:
+            a_d = pos_carga_der - pos_izq_d
+            b_d = pos_der_d - pos_carga_der
+            L_elem_d = pos_der_d - pos_izq_d
+            
+            v_izq = P_carga * (b_d**2) * (3*a_d + b_d) / (L_elem_d**3)
+            v_der = P_carga * (a_d**2) * (a_d + 3*b_d) / (L_elem_d**3)
+            M_izq = P_carga * a_d * (b_d**2) / (L_elem_d**2)
+            M_der = -P_carga * (a_d**2) * b_d / (L_elem_d**2)
+            
+            F_pretensado[idx_izq_d * 7 + 1] += v_izq
+            F_pretensado[idx_izq_d * 7 + 3] += M_izq
+            F_pretensado[idx_der_d * 7 + 1] += v_der
+            F_pretensado[idx_der_d * 7 + 3] += M_der
+    
+    print(f"✓ Cargas en L/3 y 2L/3 transferidas a nodos")
+    
+
+# =====================================================================
+# MOSTRAR MATRIZ DE FUERZAS DE PRETENSADO (63×1)
+# =====================================================================
+print("\n" + "="*70)
+print("MATRIZ DE FUERZAS DE PRETENSADO (63×1)")
+print("="*70)
+
+# Crear DataFrame con el vector completo
+df_F_pretensado = pd.DataFrame({
+    "Fila": np.arange(1, ndof_total + 1),
+    "DOF": labels_global,
+    "F_pretensado (kN o kN·m)": F_pretensado
+})
+
+# Mostrar solo componentes no nulas
+df_F_pretensado_nonzero = df_F_pretensado[np.abs(df_F_pretensado["F_pretensado (kN o kN·m)"]) > 1e-10]
+print("\nComponentes no nulas:")
+print(df_F_pretensado_nonzero.to_string(index=False))
+
+# Organizar por nodos para visualización
+print("\n" + "="*70)
+print("FUERZAS DE PRETENSADO POR NODO")
+print("="*70)
+matriz_pretensado_nodos = []
+for i in range(num_nodos):
+    base = i * 7
+    matriz_pretensado_nodos.append([
+        f"N{i+1}",
+        nodos[i],
+        F_pretensado[base + 0],  # u
+        F_pretensado[base + 1],  # v
+        F_pretensado[base + 2],  # w
+        F_pretensado[base + 3],  # θx
+        F_pretensado[base + 4],  # θy
+        F_pretensado[base + 5],  # θz
+        F_pretensado[base + 6]   # θ'x
+    ])
+
+df_pretensado_nodos = pd.DataFrame(matriz_pretensado_nodos, columns=[
+    'Nodo', 'Pos (m)', 'u (kN)', 'v (kN)', 'w (kN)', 
+    'θx (kN·m)', 'θy (kN·m)', 'θz (kN·m)', "θ'x (kN·m²)"
+])
+print("\n" + df_pretensado_nodos.to_string(index=False))
+
+
+
 # -------------------------------
 # 1. CARGAS DISTRIBUIDAS EN ELEMENTOS
 # -------------------------------
@@ -265,23 +419,29 @@ for i in range(num_nodos - 1):
     Fh_i = (qh * Ls) / 2
     Fh_j = (qh * Ls) / 2
     
-    # Momentos en el plano
-    Mx_i = -(qv * Ls**2) / 12
-    Mx_j = (qv * Ls**2) / 12
+    # Momentos en el plano z
+    Mz_i = -(qv * Ls**2) / 12
+    Mz_j = (qv * Ls**2) / 12
+
+    # Momentos en el plano y
+    My_i = -(qh * Ls**2) / 12
+    My_j = (qh * Ls**2) / 12
     
     # Ensamblar en el vector global
     dof_base_i = i * 7
     dof_base_j = (i + 1) * 7
     
     # Nodo i
-    F_global[dof_base_i + 0] += Fh_i      # u (horizontal)
+    F_global[dof_base_i + 2] += Fh_i      # u (horizontal)
     F_global[dof_base_i + 1] += Fv_i      # v (vertical)
-    F_global[dof_base_i + 3] += Mx_i      # θx (momento flexión)
+    F_global[dof_base_i + 5] += Mz_i      # θz (momento flexión)
+    F_global[dof_base_i + 4] += My_i      # θy (momento comp horizontal)
     
     # Nodo j
-    F_global[dof_base_j + 0] += Fh_j      # u (horizontal)
+    F_global[dof_base_j + 2] += Fh_j      # u (horizontal)
     F_global[dof_base_j + 1] += Fv_j      # v (vertical)
-    F_global[dof_base_j + 3] += Mx_j      # θx (momento flexión)
+    F_global[dof_base_j + 5] += Mz_j      # θz (momento flexión)
+    F_global[dof_base_j + 4] += My_j      # θy (momento comp horizontal)
 
 # -------------------------------
 # 2. AGREGAR CARGAS DE IZAJE
@@ -294,6 +454,9 @@ F_global[2*7 + 1] += qizaje  # v3 (fuerza vertical hacia arriba, positiva)
 
 # Aplicar carga de izaje en Nodo 7 (índice 6) - solo componente vertical
 F_global[6*7 + 1] += qizaje  # v7 (fuerza vertical hacia arriba, positiva)
+
+#-----------------------------------------------------ESTO SE COLOCA PARA UNIR MATRICES DE PRETENSADO CON LAS DE IZAJE Y CARGAS 
+F_global = F_global + F_pretensado 
 
 # -------------------------------
 # VISUALIZACIÓN COMPLETA: 63 FILAS (9 nodos × 7 GDL)
@@ -370,8 +533,14 @@ print("\nTotal de GDL: {} (9 nodos × 7 GDL/nodo)".format(ndof_total))
 # Nodo 7 (índice 6): v7 restringido
 
 dofs_restringidos = [
-    2*7 + 1,  # v3 (vertical en nodo 3 - punto de izaje)
-    6*7 + 1,  # v7 (vertical en nodo 7 - punto de izaje)
+    # Nodo 3 (izaje izquierdo) - punto de apoyo
+    2*7 + 0,  # u3 = 0 (sin desplazamiento horizontal)
+    2*7 + 1,  # v3 = 0 (sin desplazamiento vertical)
+    2*7 + 2,  # w3 = 0 (sin desplazamiento lateral)
+    
+    # Nodo 7 (izaje derecho) - punto de apoyo
+    6*7 + 1,  # v7 = 0 (sin desplazamiento vertical)
+    6*7 + 2,  # w7 = 0 (sin desplazamiento lateral)
 ]
 
 # Todos los DOF libres (los que no están restringidos)
@@ -665,24 +834,31 @@ axes[1].set_title('Diagrama de Fuerza Cortante Vertical en Nodos', fontweight='b
 axes[1].grid(True, alpha=0.3)
 axes[1].legend()
 
-# Diagrama de momento flector My
-axes[2].plot(nodos, esfuerzos_nodales[:, 4], '^-', linewidth=2.5, markersize=8, color='green', label='Momento My')
+
+# Diagrama de momento flector NUEVO
+axes[2].plot(nodos, esfuerzos_nodales[:, 5], '^-', linewidth=2.5, markersize=8, color='green', label='Momento My')
 axes[2].axhline(y=0, color='k', linestyle='--', linewidth=0.8, alpha=0.5)
-axes[2].fill_between(nodos, esfuerzos_nodales[:, 4], alpha=0.3, color='green')
+axes[2].fill_between(nodos, esfuerzos_nodales[:, 5], alpha=0.3, color='green')
 axes[2].set_ylabel('My (kN·m)', fontweight='bold', fontsize=11)
-axes[2].set_title('Diagrama de Momento Flector My en Nodos', fontweight='bold', fontsize=13)
+axes[2].set_title('Diagrama de Momento Flector Mz en Nodos', fontweight='bold', fontsize=13)
 axes[2].grid(True, alpha=0.3)
 axes[2].legend()
 
-# Diagrama de momento torsor
-axes[3].plot(nodos, esfuerzos_nodales[:, 3], 'd-', linewidth=2.5, markersize=8, color='purple', label='Torsor Tx')
+# Extraer desplazamientos verticales de cada nodo
+uy_values = [u_global[i*7 + 1] for i in range(num_nodos)]  # v está en posición 1 de cada nodo
+
+# Diagrama de deflexión vertical
+axes[3].plot(nodos, uy_values, 'd-', linewidth=2.5, markersize=8, color='purple', label='Deflexión Vertical')
 axes[3].axhline(y=0, color='k', linestyle='--', linewidth=0.8, alpha=0.5)
-axes[3].fill_between(nodos, esfuerzos_nodales[:, 3], alpha=0.3, color='purple')
-axes[3].set_ylabel('Tx (kN·m)', fontweight='bold', fontsize=11)
+axes[3].fill_between(nodos, uy_values, alpha=0.3, color='purple')
+axes[3].set_ylabel('Deflexión v (m)', fontweight='bold', fontsize=11)
 axes[3].set_xlabel('Posición a lo largo de la viga (m)', fontweight='bold', fontsize=11)
-axes[3].set_title('Diagrama de Momento Torsor en Nodos', fontweight='bold', fontsize=13)
+axes[3].set_title('Diagrama de Deflexión Vertical en Nodos', fontweight='bold', fontsize=13)
 axes[3].grid(True, alpha=0.3)
 axes[3].legend()
+
+
+
 
 # Marcar puntos de izaje en todos los gráficos
 for ax in axes:
@@ -707,19 +883,19 @@ from matplotlib.collections import PatchCollection
 # Dimensiones de la sección VI en METROS (convertidas de pulgadas)
 # 1 pulgada = 0.0254 metros
 
-D1 = 72.0 * 0.0254   # 1.8288 m
-D2 = 5.0 * 0.0254    # 0.127 m
-D3 = 3.0 * 0.0254    # 0.0762 m
-D4 = 4.0 * 0.0254    # 0.1016 m
-D5 = 10.0 * 0.0254   # 0.254 m
-D6 = 8.0 * 0.0254    # 0.2032 m
+D1 = 1.829   # 1.8288 m
+D2 = 0.127   # 0.127 m
+D3 = 0.076    # 0.0762 m
+D4 = 0.102    # 0.1016 m
+D5 = 0.254   # 0.254 m
+D6 = 0.203   # 0.2032 m
 
-B1 = 42.0 * 0.0254   # 1.0668 m
-B2 = 28.0 * 0.0254   # 0.7112 m
-B3 = 8.0 * 0.0254    # 0.2032 m
-B4 = 4.0 * 0.0254    # 0.1016 m
-B5 = 13.0 * 0.0254   # 0.3302 m
-B6 = 10.0 * 0.0254   # 0.254 m
+B1 = 1.067   # 1.0668 m
+B2 = 0.711   # 0.7112 m
+B3 = 0.203    # 0.2032 m
+B4 = 0.102   # 0.1016 m
+B5 = 0.330   # 0.3302 m
+B6 = 0.254  # 0.254 m
 
 print("\n" + "="*70)
 print("DIMENSIONES DE LA SECCIÓN PCI TIPO VI")
@@ -938,81 +1114,7 @@ def graficar_esfuerzos_nodo(nodo_idx, esfuerzos_nodales, nodos):
     
     return fig
 
-# -------------------------------
-# GENERAR GRÁFICOS PARA TODOS LOS NODOS
-# -------------------------------
-print("\n" + "="*70)
-print("GENERANDO DIAGRAMAS DE ESFUERZOS EN SECCIONES...")
-print("="*70)
 
-# Puedes seleccionar qué nodos graficar
-nodos_a_graficar = [0, 2, 4, 6, 8]  # N1, N3, N5, N7, N9
 
-for idx in nodos_a_graficar:
-    print(f"\nGenerando diagrama para Nodo N{idx+1}...")
-    fig = graficar_esfuerzos_nodo(idx, esfuerzos_nodales, nodos)
-    plt.show()
-    
-print("\n✓ Todos los diagramas generados exitosamente")
 
-# -------------------------------
-# FUNCIÓN PARA GRAFICAR COMPARACIÓN DE MÚLTIPLES NODOS
-# -------------------------------
-def graficar_comparacion_nodos(nodos_idx, esfuerzos_nodales, nodos):
-    """
-    Grafica comparación de esfuerzos en múltiples nodos
-    """
-    
-    n_nodos = len(nodos_idx)
-    fig, axes = plt.subplots(2, (n_nodos+1)//2, figsize=(5*n_nodos, 10))
-    axes = axes.flatten()
-    
-    for i, nodo_idx in enumerate(nodos_idx):
-        # Extraer esfuerzos
-        N = esfuerzos_nodales[nodo_idx, 0]
-        My = esfuerzos_nodales[nodo_idx, 4]
-        Mz = esfuerzos_nodales[nodo_idx, 5]
-        Vy = esfuerzos_nodales[nodo_idx, 1]
-        
-        # Crear sección
-        vertices = crear_seccion_VI()
-        Z, Y, sigma, mask = calcular_esfuerzos_seccion(N, Vy, My, Mz, nodo_idx+1, vertices)
-        
-        # Graficar
-        ax = axes[i]
-        polygon = Polygon(vertices, fill=False, edgecolor='black', linewidth=1.5)
-        ax.add_patch(polygon)
-        
-        levels = np.linspace(-50, 50, 20)  # Ajustar según tus valores
-        contour = ax.contourf(Z, Y, sigma, levels=levels, cmap='RdBu_r', extend='both')
-        ax.contour(Z, Y, sigma, levels=[0], colors='black', linewidths=1.5, linestyles='--')
-        
-        ax.set_title(f'N{nodo_idx+1} ({nodos[nodo_idx]:.1f} m)', fontweight='bold')
-        ax.set_xlabel('z (m)')
-        ax.set_ylabel('y (m)')
-        ax.set_aspect('equal')
-        ax.grid(True, alpha=0.2)
-        
-        # Colorbar individual
-        plt.colorbar(contour, ax=ax, label='σ (MPa)')
-    
-    # Ocultar ejes sobrantes
-    for i in range(len(nodos_idx), len(axes)):
-        axes[i].axis('off')
-    
-    plt.suptitle('COMPARACIÓN DE ESFUERZOS EN DIFERENTES NODOS', 
-                 fontweight='bold', fontsize=14, y=0.98)
-    plt.tight_layout()
-    
-    return fig
-
-# Generar comparación
-print("\n" + "="*70)
-print("GENERANDO COMPARACIÓN DE NODOS...")
-print("="*70)
-
-fig_comp = graficar_comparacion_nodos([0, 2, 4, 6, 8], esfuerzos_nodales, nodos)
-plt.show()
-
-print("\n✓ Comparación generada exitosamente")
 
