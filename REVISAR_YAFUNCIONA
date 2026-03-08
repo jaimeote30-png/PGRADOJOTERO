@@ -1,0 +1,2383 @@
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+
+## Se considera que solo se usará la seccion VI del PCI para las 3 longitudes 35, 25, 15
+## Se tienen los 9 puntos de analisis de la viga
+
+## DEFINIR LOS PARÁMETROS GEOMÉTRICOS DE LA VIGA Y NODOS DE INTERÉS
+## PARA EVITAR CONFUSIONES TODAS MAS MEDIDAS DE LONGITUD SON EN METROS
+
+##-----------------------------------------##
+LTOTAL=40
+PIZAJE= 0 # Ton
+SXNVIGA= "VI"
+PA=0.7
+PEN= 0.924
+PIF=0.30523
+PID=0.02563
+PESO=24  # kN/m3
+PTOR= 0.01555 #m^4
+PCW= 0.00653 #m^6
+fc=49 # MPa
+
+# -------------------------------
+# Ángulo de inclinación de la viga
+# -------------------------------
+Grados = 10               # Ángulo en grados (entrada del modelo)
+alpha = np.deg2rad(Grados) # Conversión a radianes
+
+##-----------------------------------------##
+
+#MIRAR TABLAS PARA COLOCAR VALORES GEOM---------------------------------------------------------------------------------
+
+#DEFINIR NODOS Y POSICIONES
+
+##-----------------------------------------##
+a_L = 0.05       # Relación a/L
+h = 1.8         # Distancia h desde los puntos de izaje (m)
+##-----------------------------------------##
+
+# =====================================================================
+# PARÁMETROS DE PRETENSADO
+# =====================================================================
+CONSIDERAR_PRETENSADO = True  # True/False para activar/desactivar
+
+P_pretensado = 10000  # kN - Fuerza de pretensado
+e_pretensado = 0.65  # m  - Excentricidad en el centro
+
+print(f"\nPretensado: {'ACTIVADO' if CONSIDERAR_PRETENSADO else 'DESACTIVADO'}")
+if CONSIDERAR_PRETENSADO:
+    print(f"  P = {P_pretensado} kN")
+    print(f"  e = {e_pretensado} m")
+
+
+
+
+
+
+a = a_L * LTOTAL
+
+# -------------------------------
+# 3. Función para limitar nodos al dominio [0, L]
+# -------------------------------
+def limitar(x, LTOTAL):
+    return max(0.0, min(x, LTOTAL))
+
+# -------------------------------
+# 4. Posición de los 9 nodos (con control geométrico)
+# -------------------------------
+nodos = np.array([
+    0.0,                          # Extremo izquierdo
+    limitar(a - h, LTOTAL),            # Antes izaje izquierdo
+    a,                            # Izaje izquierdo
+    limitar(a + h, LTOTAL),            # Después izaje izquierdo
+    LTOTAL / 2,                        # Mitad de la viga
+    limitar(LTOTAL - a - h, LTOTAL),        # Antes izaje derecho
+    LTOTAL - a,                        # Izaje derecho
+    limitar(LTOTAL - a + h, LTOTAL),        # Después izaje derecho
+    LTOTAL                             # Extremo derecho
+])
+
+# -------------------------------
+# 5. Organización visual
+# -------------------------------
+df_nodos = pd.DataFrame({
+    "Nodo": [f"N{i+1}" for i in range(len(nodos))],
+    "Posición [m]": nodos.round(3)
+})
+
+df_nodos
+
+print(df_nodos.to_string(index=False))
+
+
+nodos = np.array(nodos)
+num_nodos = len(nodos)
+
+plt.figure(figsize=(16, 3))
+
+# Dibujo de la viga
+plt.hlines(y=0, xmin=0, xmax=LTOTAL, linewidth=6)
+plt.scatter(nodos, np.zeros_like(nodos), s=80, zorder=3)
+
+# Alternar etiquetas arriba y abajo
+offsets = [0.25 if i % 2 == 0 else -0.35 for i in range(num_nodos)]
+
+for i, (x, dy) in enumerate(zip(nodos, offsets)):
+    plt.annotate(
+        f"N{i+1}\n{x:.2f} m",
+        xy=(x, 0),
+        xytext=(x, dy),
+        textcoords="data",
+        ha="center",
+        fontsize=9,
+        arrowprops=dict(arrowstyle="-", lw=0.8)
+    )
+
+# Etiqueta del centro
+plt.text(LTOTAL / 2, 0.55, f"Viga – Longitud total = {LTOTAL:.2f} m",
+         ha="center", fontsize=12, fontweight="bold")
+
+# Estética
+plt.yticks([])
+plt.xlabel("Posición a lo largo de la viga [m]")
+plt.xlim(-0.5, LTOTAL + 0.5)
+plt.ylim(-0.6, 0.8)
+plt.grid(axis="x", linestyle="--", alpha=0.4)
+
+plt.tight_layout()
+plt.show()
+
+
+
+## PARTE DE LA MATRIZ DE AQUÍ EN ADELANTE ------------------------------------------------------------------------------------------------------------------
+
+# -------------------------------
+# 1. Definir etiquetas de filas y columnas
+# -------------------------------
+labels = [
+    "u1","v1","w1","θx1","θy1","θz1","θ'x1",
+    "u2","v2","w2","θx2","θy2","θz2","θ'x2"
+]
+
+# -------------------------------
+# 1. Matriz original con letras
+# -------------------------------
+K_letras = np.array([
+["A","0","0","0","0","0","0","-A","0","0","0","0","0","0"],
+["0","B","0","0","0","G","0","0","-B","0","0","0","G","0"],
+["0","0","C","0","-H","0","0","0","0","-C","0","-H","0","0"],
+["0","0","0","D","0","0","I","0","0","0","-D","0","0","I"],
+["0","0","-H","0","E","0","0","0","0","H","0","L","0","0"],
+["0","G","0","0","0","F","0","0","-G","0","0","0","M","0"],
+["0","0","0","I","0","0","K","0","0","0","-I","0","0","-J"],
+
+["-A","0","0","0","0","0","0","A","0","0","0","0","0","0"],
+["0","-B","0","0","0","-G","0","0","B","0","0","0","-G","0"],
+["0","0","-C","0","H","0","0","0","0","C","0","H","0","0"],
+["0","0","0","-D","0","0","-I","0","0","0","D","0","0","-I"],
+["0","0","-H","0","L","0","0","0","0","H","0","E","0","0"],
+["0","G","0","0","0","M","0","0","-G","0","0","0","F","0"],
+["0","0","0","I","0","0","-J","0","0","0","-I","0","0","K"]
+], dtype=object)
+
+# -------------------------------
+# 2. Valores de las letras
+# -------------------------------
+#Variables para las letras:
+
+Ls=LTOTAL/8 
+A=PA
+
+
+# DESPUÉS (CCP-14):
+K1 = 1.0
+wc = 2400  # kg/m³
+E_MPa = 0.043 * K1 * (wc**1.5) * np.sqrt(fc)
+E = E_MPa * 1000
+
+
+Iy=PID
+Iz=PIF
+v=0.2
+G_shear=E/(2*(1+v))
+Cw=PCW
+J=PTOR
+q = PESO*A #kN/m
+
+
+ndof_nodo = 7
+num_nodos = len(nodos)
+ndof_total = ndof_nodo * num_nodos
+
+K_global = np.zeros((ndof_total, ndof_total))
+
+def matriz_elemental(Ls):
+    if Ls <= 0:
+        return None
+
+    valores = {
+         "A": (E*A)/Ls,
+        "B": (12*E*Iz)/(Ls**3),      # ✓ Usa Iz para v
+        "C": (12*E*Iy)/(Ls**3),      # ✓ Usa Iy para w
+        "D": ((6*G_shear*J)/(5*Ls))+((12*E*Cw)/(Ls**3)),
+        "E": (4*E*Iy)/Ls,             # ✓ Usa Iy para θy
+        "F": (4*E*Iz)/Ls,             # ✓ Usa Iz para θz
+        "G": (6*E*Iz)/(Ls**2),       # ✓ Usa Iz para acoplamiento v-θz
+        "H": (6*E*Iy)/(Ls**2),       # ✓ Usa Iy para acoplamiento w-θy
+        "I": ((G_shear*J)/(10))+((6*E*Cw)/(Ls**2)),
+        "J": ((G_shear*J*Ls)/(30))-((2*E*Cw)/(Ls)),
+        "K": ((2*G_shear*J*Ls)/(15))+((4*E*Cw)/(Ls)),
+        "L": (E*Iy*2)/Ls,             # ✓ Usa Iy
+        "M": (E*Iz*2)/Ls              # ✓ Usa Iz
+    }
+    
+
+
+    def convertir(valor):
+        if valor == "0":
+            return 0.0
+        if valor.startswith("-"):
+            return -valores[valor[1:]]
+        return valores[valor]
+
+    return np.vectorize(convertir)(K_letras)
+
+for i in range(num_nodos - 1):
+
+    xi = nodos[i]
+    xj = nodos[i + 1]
+    Ls = xj - xi
+
+    # Si el segmento no existe (nodos coinciden)
+    if Ls <= 0:
+        continue
+
+    Ke = matriz_elemental(Ls)
+
+    # GDL globales del nodo i y i+1
+    dofs_i = np.arange(i*7, i*7 + 7)
+    dofs_j = np.arange((i+1)*7, (i+1)*7 + 7)
+
+    dofs = np.concatenate([dofs_i, dofs_j])
+
+    # Ensamblaje
+    for a in range(14):
+        for b in range(14):
+            K_global[dofs[a], dofs[b]] += Ke[a, b]
+
+labels_global = []
+for i in range(num_nodos):
+    labels_global += [
+        f"u{i+1}", f"v{i+1}", f"w{i+1}",
+        f"θx{i+1}", f"θy{i+1}", f"θz{i+1}", f"θ'x{i+1}"
+    ]
+
+df_K_global = pd.DataFrame(K_global, index=labels_global, columns=labels_global)
+df_K_global
+
+
+
+# -------------------------------
+# VECTOR DE CARGAS NODALES (63 x 1)
+# -------------------------------
+
+# Inicializar vector de fuerzas (7 DOF × num_nodos)
+F_global = np.zeros(ndof_total)
+
+# Carga distribuida (ya la tienes definida)
+# q = PESO * PA  # kN/m
+
+# =====================================================================
+# CÁLCULO DE FUERZAS DE PRETENSADO
+# =====================================================================
+F_pretensado = np.zeros(ndof_total)
+
+if CONSIDERAR_PRETENSADO:
+    print("\n" + "="*70)
+    print("CALCULANDO FUERZAS DE PRETENSADO")
+    print("="*70)
+    
+    L = LTOTAL
+    P = P_pretensado
+    e = e_pretensado
+    
+    # 1. Fuerzas axiales en extremos
+    F_pretensado[0 * 7 + 0] = P      # u1 = +P
+    F_pretensado[8 * 7 + 0] = -P     # u9 = -P
+    print(f"✓ Fuerzas axiales: N1: +{P} kN, N9: -{P} kN")
+    
+    # 2. Fuerzas verticales en extremos
+    F_vert_extremo = 3 * P * e / L
+    F_pretensado[0 * 7 + 1] = -F_vert_extremo  # v1
+    F_pretensado[8 * 7 + 1] = -F_vert_extremo  # v9
+    print(f"✓ Fuerzas verticales extremos: {F_vert_extremo:.4f} kN")
+    
+    # 3. Transferir cargas en L/3 y 2L/3
+    pos_carga_izq = L / 3
+    pos_carga_der = 2 * L / 3
+    P_carga = 3 * P * e / L
+    
+    # Carga izquierda
+    tolerancia = 1e-6
+    nodos_izq_L3 = nodos[nodos <= pos_carga_izq]
+    nodos_der_L3 = nodos[nodos >= pos_carga_izq]
+    
+    if len(nodos_izq_L3) > 0 and len(nodos_der_L3) > 0:
+        idx_izq_i = len(nodos_izq_L3) - 1
+        idx_der_i = len(nodos_izq_L3)
+        pos_izq_i = nodos[idx_izq_i]
+        pos_der_i = nodos[idx_der_i]
+        
+        if abs(pos_carga_izq - pos_izq_i) < tolerancia:
+            F_pretensado[idx_izq_i * 7 + 1] += P_carga
+        elif abs(pos_carga_izq - pos_der_i) < tolerancia:
+            F_pretensado[idx_der_i * 7 + 1] += P_carga
+        else:
+            a_i = pos_carga_izq - pos_izq_i
+            b_i = pos_der_i - pos_carga_izq
+            L_elem_i = pos_der_i - pos_izq_i
+            
+            v_izq = P_carga * (b_i**2) * (3*a_i + b_i) / (L_elem_i**3)
+            v_der = P_carga * (a_i**2) * (a_i + 3*b_i) / (L_elem_i**3)
+            M_izq = P_carga * a_i * (b_i**2) / (L_elem_i**2)
+            M_der = -P_carga * (a_i**2) * b_i / (L_elem_i**2)
+            
+            F_pretensado[idx_izq_i * 7 + 1] += v_izq
+            F_pretensado[idx_izq_i * 7 + 5] += M_izq
+            F_pretensado[idx_der_i * 7 + 1] += v_der
+            F_pretensado[idx_der_i * 7 + 5] += M_der
+    
+    # Carga derecha
+    nodos_izq_2L3 = nodos[nodos <= pos_carga_der]
+    nodos_der_2L3 = nodos[nodos >= pos_carga_der]
+    
+    if len(nodos_izq_2L3) > 0 and len(nodos_der_2L3) > 0:
+        idx_izq_d = len(nodos_izq_2L3) - 1
+        idx_der_d = len(nodos_izq_2L3)
+        pos_izq_d = nodos[idx_izq_d]
+        pos_der_d = nodos[idx_der_d]
+        
+        if abs(pos_carga_der - pos_izq_d) < tolerancia:
+            F_pretensado[idx_izq_d * 7 + 1] += P_carga
+        elif abs(pos_carga_der - pos_der_d) < tolerancia:
+            F_pretensado[idx_der_d * 7 + 1] += P_carga
+        else:
+            a_d = pos_carga_der - pos_izq_d
+            b_d = pos_der_d - pos_carga_der
+            L_elem_d = pos_der_d - pos_izq_d
+            
+            v_izq = P_carga * (b_d**2) * (3*a_d + b_d) / (L_elem_d**3)
+            v_der = P_carga * (a_d**2) * (a_d + 3*b_d) / (L_elem_d**3)
+            M_izq = P_carga * a_d * (b_d**2) / (L_elem_d**2)
+            M_der = -P_carga * (a_d**2) * b_d / (L_elem_d**2)
+            
+            F_pretensado[idx_izq_d * 7 + 1] += v_izq
+            F_pretensado[idx_izq_d * 7 + 5] += M_izq
+            F_pretensado[idx_der_d * 7 + 1] += v_der
+            F_pretensado[idx_der_d * 7 + 5] += M_der
+    
+    print(f"✓ Cargas en L/3 y 2L/3 transferidas a nodos")
+    
+
+# =====================================================================
+# MOSTRAR MATRIZ DE FUERZAS DE PRETENSADO (63×1)
+# =====================================================================
+print("\n" + "="*70)
+print("MATRIZ DE FUERZAS DE PRETENSADO (63×1)")
+print("="*70)
+
+# Crear DataFrame con el vector completo
+df_F_pretensado = pd.DataFrame({
+    "Fila": np.arange(1, ndof_total + 1),
+    "DOF": labels_global,
+    "F_pretensado (kN o kN·m)": F_pretensado
+})
+
+# Mostrar solo componentes no nulas
+df_F_pretensado_nonzero = df_F_pretensado[np.abs(df_F_pretensado["F_pretensado (kN o kN·m)"]) > 1e-10]
+print("\nComponentes no nulas:")
+print(df_F_pretensado_nonzero.to_string(index=False))
+
+# Organizar por nodos para visualización
+print("\n" + "="*70)
+print("FUERZAS DE PRETENSADO POR NODO")
+print("="*70)
+matriz_pretensado_nodos = []
+for i in range(num_nodos):
+    base = i * 7
+    matriz_pretensado_nodos.append([
+        f"N{i+1}",
+        nodos[i],
+        F_pretensado[base + 0],  # u
+        F_pretensado[base + 1],  # v
+        F_pretensado[base + 2],  # w
+        F_pretensado[base + 3],  # θx
+        F_pretensado[base + 4],  # θy
+        F_pretensado[base + 5],  # θz
+        F_pretensado[base + 6]   # θ'x
+    ])
+
+df_pretensado_nodos = pd.DataFrame(matriz_pretensado_nodos, columns=[
+    'Nodo', 'Pos (m)', 'u (kN)', 'v (kN)', 'w (kN)', 
+    'θx (kN·m)', 'θy (kN·m)', 'θz (kN·m)', "θ'x (kN·m²)"
+])
+print("\n" + df_pretensado_nodos.to_string(index=False))
+
+
+
+# -------------------------------
+# 1. CARGAS DISTRIBUIDAS EN ELEMENTOS
+# -------------------------------
+for i in range(num_nodos - 1):
+    xi = nodos[i]
+    xj = nodos[i + 1]
+    Ls = xj - xi
+    
+    if Ls <= 0:
+        continue
+    
+    # Componentes de la carga
+    qv = q * np.cos(alpha)  # Componente vertical de la carga
+    qh = q * np.sin(alpha)  # Componente horizontal de la carga
+    
+    # Fuerzas nodales equivalentes para carga distribuida
+    Fv_i = -(qv * Ls) / 2
+    Fv_j = -(qv * Ls) / 2
+    
+    Fh_i = -(qh * Ls) / 2
+    Fh_j = -(qh * Ls) / 2
+    
+    # Momentos en el plano z
+    Mz_i = -(qv * Ls**2) / 12
+    Mz_j = (qv * Ls**2) / 12
+
+    # Momentos en el plano y
+    My_i = -(qh * Ls**2) / 12
+    My_j = (qh * Ls**2) / 12
+    
+    # Ensamblar en el vector global
+    dof_base_i = i * 7
+    dof_base_j = (i + 1) * 7
+    
+    # Nodo i
+    F_global[dof_base_i + 2] += Fh_i      # u (horizontal)
+    F_global[dof_base_i + 1] += Fv_i      # v (vertical)
+    F_global[dof_base_i + 5] += Mz_i      # θz (momento flexión)
+    F_global[dof_base_i + 4] += My_i      # θy (momento comp horizontal)
+    
+    # Nodo j
+    F_global[dof_base_j + 2] += Fh_j      # u (horizontal)
+    F_global[dof_base_j + 1] += Fv_j      # v (vertical)
+    F_global[dof_base_j + 5] += Mz_j      # θz (momento flexión)
+    F_global[dof_base_j + 4] += My_j      # θy (momento comp horizontal)
+
+# -------------------------------
+# 2. AGREGAR CARGAS DE IZAJE
+# -------------------------------
+# Definir la carga de izaje
+qizaje = PIZAJE # Fuerza total en cada punto de izaje [kN]
+
+# Aplicar carga de izaje en Nodo 3 (índice 2) - solo componente vertical
+F_global[2*7 + 1] += qizaje  # v3 (fuerza vertical hacia arriba, positiva)
+
+# Aplicar carga de izaje en Nodo 7 (índice 6) - solo componente vertical
+F_global[6*7 + 1] += qizaje  # v7 (fuerza vertical hacia arriba, positiva)
+
+#-----------------------------------------------------ESTO SE COLOCA PARA UNIR MATRICES DE PRETENSADO CON LAS DE IZAJE Y CARGAS 
+F_global = F_global + F_pretensado 
+
+
+
+# -------------------------------
+# VISUALIZACIÓN COMPLETA: 63 FILAS (9 nodos × 7 GDL)
+# -------------------------------
+print("\n" + "="*70)
+print("VECTOR DE CARGAS NODALES - MATRIZ 63x1")
+print("="*70)
+print(f"Dimensión de la matriz: {F_global.shape}")
+print(f"Carga de izaje aplicada: qizaje = {qizaje:.4f} Ton en N3 y N7")
+print("="*70)
+print(f"{'Fila':<6} {'DOF':<8} {'Valor [kN o kN·m]':<20}")
+print("-"*70)
+
+for i in range(ndof_total):
+    nodo_num = (i // 7) + 1
+    gdl_local = i % 7
+    gdl_nombres = ["u", "v", "w", "θx", "θy", "θz", "θ'x"]
+    dof_label = f"{gdl_nombres[gdl_local]}{nodo_num}"
+    
+    # Marcar con asterisco los nodos de izaje
+    marca = ""
+    if (i == 2*7 + 1) or (i == 6*7 + 1):  # v3 o v7
+        marca = " ← IZAJE"
+    
+    print(f"{i+1:<6} {dof_label:<8} {F_global[i]:>19.4f}{marca}")
+
+# -------------------------------
+# TAMBIÉN COMO DATAFRAME
+# -------------------------------
+df_F_completo = pd.DataFrame({
+    "Fila": np.arange(1, ndof_total + 1),
+    "DOF": labels_global,
+    "Fuerza [kN] o Momento [kN·m]": F_global.round(4)
+})
+
+print("\n" + "="*70)
+print("FORMATO TABLA")
+print("="*70)
+print(df_F_completo.to_string(index=False))
+
+# -------------------------------
+# Resumen visual por nodos
+# -------------------------------
+print("\n" + "="*110)
+print("RESUMEN ORGANIZADO POR NODOS (9 nodos × 7 GDL cada uno)")
+print("="*110)
+print(f"{'Nodo':<8} {'u (kN)':<13} {'v (kN)':<13} {'w (kN)':<13} {'θx (kN·m)':<13} {'θy (kN·m)':<13} {'θz (kN·m)':<13} {'θ\\x (kN·m)':<13}")
+print("-"*110)
+
+for i in range(num_nodos):
+    base = i * 7
+    nodo_label = f"N{i+1}"
+    if i == 2 or i == 6:  # Marcar nodos de izaje
+        nodo_label += " (izaje)"
+    
+    print(f"{nodo_label:<8} "
+          f"{F_global[base+0]:>12.4f} "
+          f"{F_global[base+1]:>12.4f} "
+          f"{F_global[base+2]:>12.4f} "
+          f"{F_global[base+3]:>12.4f} "
+          f"{F_global[base+4]:>12.4f} "
+          f"{F_global[base+5]:>12.4f} "
+          f"{F_global[base+6]:>12.4f}")
+
+print("\nTotal de GDL: {} (9 nodos × 7 GDL/nodo)".format(ndof_total))
+
+
+
+# -------------------------------
+# CONDICIONES DE FRONTERA
+# -------------------------------
+# Los puntos de izaje no tienen desplazamiento vertical
+# Nodo 3 (índice 2): v3 restringido
+# Nodo 7 (índice 6): v7 restringido
+
+dofs_restringidos = [
+    # Nodo 3 (izaje izquierdo) - punto de apoyo
+    2*7 + 0,  # u3 = 0 (sin desplazamiento horizontal)
+    2*7 + 1,  # v3 = 0 (sin desplazamiento vertical)
+    2*7 + 2,  # w3 = 0 (sin desplazamiento lateral)
+    
+    # Nodo 7 (izaje derecho) - punto de apoyo
+    6*7 + 1,  # v7 = 0 (sin desplazamiento vertical)
+    6*7 + 2,  # w7 = 0 (sin desplazamiento lateral)
+]
+
+# Todos los DOF libres (los que no están restringidos)
+dofs_libres = np.setdiff1d(np.arange(ndof_total), dofs_restringidos)
+
+print("\n" + "="*70)
+print("CONDICIONES DE FRONTERA")
+print("="*70)
+print(f"Total de GDL: {ndof_total}")
+print(f"GDL restringidos: {len(dofs_restringidos)}")
+print(f"GDL libres: {len(dofs_libres)}")
+print("\nGDL restringidos:")
+for dof in dofs_restringidos:
+    print(f"  - Fila {dof+1}: {labels_global[dof]} = 0 (sin desplazamiento)")
+
+# -------------------------------
+# PARTICIONAR LA MATRIZ DE RIGIDEZ Y VECTOR DE CARGAS
+# -------------------------------
+# Extraer submatrices
+K_libre = K_global[np.ix_(dofs_libres, dofs_libres)]
+F_libre = F_global[dofs_libres]
+
+print("\n" + "="*70)
+print("SISTEMA REDUCIDO")
+print("="*70)
+print(f"Matriz de rigidez reducida K_libre: {K_libre.shape}")
+print(f"Vector de cargas reducido F_libre: {F_libre.shape}")
+
+# -------------------------------
+# RESOLVER EL SISTEMA: K_libre * u_libre = F_libre
+# -------------------------------
+print("\n" + "="*70)
+print("RESOLVIENDO SISTEMA DE ECUACIONES...")
+print("="*70)
+
+u_libre = np.linalg.solve(K_libre, F_libre)
+
+print(f"✓ Sistema resuelto exitosamente")
+print(f"  Desplazamientos libres calculados: {u_libre.shape}")
+
+# -------------------------------
+# ENSAMBLAR VECTOR COMPLETO DE DESPLAZAMIENTOS (63×1)
+# -------------------------------
+u_global = np.zeros(ndof_total)
+u_global[dofs_libres] = u_libre
+# Los DOF restringidos quedan en cero (v3=0, v7=0)
+
+# -------------------------------
+# CÁLCULO DE REACCIONES: R = K·u - F
+# -------------------------------
+print("\n" + "="*80)
+print("CÁLCULO DE REACCIONES EN LOS APOYOS")
+print("="*80)
+
+# Calcular fuerzas internas totales
+F_int_total = K_global @ u_global
+
+# Calcular reacciones
+R_global = F_int_total - F_global
+
+# Extraer solo reacciones en GDL restringidos
+R_restringidos = R_global[dofs_restringidos]
+
+# -------------------------------
+# RESUMEN POR NODO DE APOYO
+# -------------------------------
+# Nodo 3 (izaje izquierdo)
+base_n3 = 2 * 7
+R_u3 = R_global[base_n3 + 0]  # Reacción horizontal
+R_v3 = R_global[base_n3 + 1]  # Reacción vertical
+R_w3 = R_global[base_n3 + 2]  # Reacción lateral
+
+# Nodo 7 (izaje derecho)
+base_n7 = 6 * 7
+R_v7 = R_global[base_n7 + 1]  # Reacción vertical
+R_w7 = R_global[base_n7 + 2]  # Reacción lateral
+
+print(f"\nNODO 3 (Izaje Izquierdo):")
+print(f"  R_u3 (horizontal): {R_u3:>12.6f} kN")
+print(f"  R_v3 (vertical):   {R_v3:>12.6f} kN")
+print(f"  R_w3 (lateral):    {R_w3:>12.6f} kN")
+
+print(f"\nNODO 7 (Izaje Derecho):")
+print(f"  R_v7 (vertical):   {R_v7:>12.6f} kN")
+print(f"  R_w7 (lateral):    {R_w7:>12.6f} kN")
+
+# -------------------------------
+# VERIFICACIÓN DE EQUILIBRIO
+# -------------------------------
+peso_total = q * LTOTAL
+izaje_total = 2 * qizaje
+R_vertical_total = R_v3 + R_v7
+
+print(f"\n{'='*60}")
+print("VERIFICACIÓN DE EQUILIBRIO VERTICAL:")
+print(f"{'='*60}")
+print(f"Peso (↓):        {-peso_total:>12.6f} kN")
+print(f"Izaje (↑):       {izaje_total:>12.6f} kN")
+print(f"Reacciones (↑):  {R_vertical_total:>12.6f} kN")
+print(f"{'-'*60}")
+suma = -peso_total + izaje_total + R_vertical_total
+print(f"Suma (≈0):       {suma:>12.6f} kN")
+
+if abs(suma) < 1e-6:
+    print("✓ Equilibrio VERIFICADO")
+
+
+
+## 📊 **Lo que obtendrás:**
+
+### **Reacciones en Nodo 3 (izaje izquierdo):**
+#- **R_u3** = Fuerza horizontal (si restringiste u3)
+#- **R_v3** = Fuerza vertical (peso que soporta este punto)
+# **R_w3** = Fuerza lateral (si restringiste w3)
+
+### **Reacciones en Nodo 7 (izaje derecho):**
+# **R_v7** = Fuerza vertical (peso que soporta este punto)
+#- **R_w7** = Fuerza lateral (si restringiste w7)
+
+
+
+## 🎯 **Interpretación física:**
+
+#Si la viga pesa 336 kN y no hay izaje (PIZAJE=0):
+#→ R_v3 + R_v7 ≈ 336 kN
+
+#Si además aplicas izaje de 168 kN en cada punto:
+#→ Peso total: -336 kN (↓)
+#→ Izaje total: +336 kN (↑)
+#→ Reacciones: ≈0 kN (viga "flotando")
+
+
+
+# -------------------------------
+# VISUALIZACIÓN DE DESPLAZAMIENTOS
+# -------------------------------
+print("\n" + "="*70)
+print("VECTOR DE DESPLAZAMIENTOS - MATRIZ 63×1")
+print("="*70)
+print(f"{'Fila':<6} {'DOF':<8} {'Desplazamiento':<20} {'Unidad':<10}")
+print("-"*70)
+
+for i in range(ndof_total):
+    nodo_num = (i // 7) + 1
+    gdl_local = i % 7
+    gdl_nombres = ["u", "v", "w", "θx", "θy", "θz", "θ'x"]
+    dof_label = f"{gdl_nombres[gdl_local]}{nodo_num}"
+    
+    # Determinar unidad
+    if gdl_local in [0, 1, 2]:  # u, v, w
+        unidad = "m"
+    else:  # rotaciones
+        unidad = "rad"
+    
+    # Marcar DOF restringidos
+    marca = ""
+    if i in dofs_restringidos:
+        marca = " ← RESTRINGIDO"
+    
+    print(f"{i+1:<6} {dof_label:<8} {u_global[i]:>19.6e} {unidad:<10}{marca}")
+
+# -------------------------------
+# RESUMEN POR NODOS
+# -------------------------------
+print("\n" + "="*130)
+print("DESPLAZAMIENTOS ORGANIZADOS POR NODOS")
+print("="*130)
+print(f"{'Nodo':<8} {'u (m)':<15} {'v (m)':<15} {'w (m)':<15} {'θx (rad)':<15} {'θy (rad)':<15} {'θz (rad)':<15} {'θ\\x (rad)':<15}")
+print("-"*130)
+
+for i in range(num_nodos):
+    base = i * 7
+    nodo_label = f"N{i+1}"
+    if i == 2 or i == 6:  # Marcar nodos de izaje
+        nodo_label += " *"
+    
+    print(f"{nodo_label:<8} "
+          f"{u_global[base+0]:>14.6e} "
+          f"{u_global[base+1]:>14.6e} "
+          f"{u_global[base+2]:>14.6e} "
+          f"{u_global[base+3]:>14.6e} "
+          f"{u_global[base+4]:>14.6e} "
+          f"{u_global[base+5]:>14.6e} "
+          f"{u_global[base+6]:>14.6e}")
+
+print("\n* = Puntos de izaje (v3=0, v7=0)")
+
+# -------------------------------
+# DESPLAZAMIENTOS MÁXIMOS
+# -------------------------------
+print("\n" + "="*70)
+print("DESPLAZAMIENTOS MÁXIMOS")
+print("="*70)
+
+# Desplazamientos verticales (v)
+v_values = [u_global[i*7 + 1] for i in range(num_nodos)]
+max_v_idx = np.argmax(np.abs(v_values))
+print(f"Máximo desplazamiento vertical:")
+print(f"  Nodo N{max_v_idx+1}: v = {v_values[max_v_idx]:.6e} m")
+
+# Desplazamientos horizontales (u)
+u_values = [u_global[i*7 + 0] for i in range(num_nodos)]
+max_u_idx = np.argmax(np.abs(u_values))
+print(f"\nMáximo desplazamiento horizontal:")
+print(f"  Nodo N{max_u_idx+1}: u = {u_values[max_u_idx]:.6e} m")
+
+# Rotaciones θx
+theta_x_values = [u_global[i*7 + 3] for i in range(num_nodos)]
+max_theta_idx = np.argmax(np.abs(theta_x_values))
+print(f"\nMáxima rotación θx:")
+print(f"  Nodo N{max_theta_idx+1}: θx = {theta_x_values[max_theta_idx]:.6e} rad")
+
+
+# -------------------------------
+# CÁLCULO DE ESFUERZOS EN CADA NODO
+# -------------------------------
+
+print("\n" + "="*100)
+print("CÁLCULO DE ESFUERZOS INTERNOS EN CADA NODO")
+print("="*100)
+
+# Inicializar matriz de esfuerzos nodales (9 nodos × 7 esfuerzos)
+# Esfuerzos: [N, Vy, Vz, Tx, My, Mz, Bx]
+esfuerzos_nodales = np.zeros((num_nodos, 7))
+
+# -------------------------------
+# CALCULAR ESFUERZOS NODO POR NODO
+# -------------------------------
+# ══════════════════════════════════════════════════════════════════════
+# FUNCIONES DE EMPOTRAMIENTO PERFECTO (FEF)
+# ══════════════════════════════════════════════════════════════════════
+
+def fef_elemento(Ls_, q, alpha=0.0):
+    """Fuerzas de empotramiento perfecto — peso propio distribuido"""
+    qv = q * np.cos(alpha)
+    qh = q * np.sin(alpha)
+    fef = np.zeros(14)
+    fef[1]  = -(qv * Ls_) / 2          # v_i
+    fef[2]  = -(qh * Ls_) / 2          # w_i
+    fef[4]  = -(qh * Ls_**2) / 12      # θy_i
+    fef[5]  = -(qv * Ls_**2) / 12      # θz_i
+    fef[8]  = -(qv * Ls_) / 2          # v_j
+    fef[9]  = -(qh * Ls_) / 2          # w_j
+    fef[11] = +(qh * Ls_**2) / 12      # θy_j
+    fef[12] = +(qv * Ls_**2) / 12      # θz_j
+    return fef
+
+def fef_pretensado_elemento(Ls_, i_elem, P, e, L_total, nodos):
+    """Fuerzas de empotramiento perfecto — pretensado (cargas en L/3 y 2L/3)"""
+    fef = np.zeros(14)
+    xi = nodos[i_elem]
+    xj = nodos[i_elem + 1]
+    P_carga = 3 * P * e / L_total
+
+    for pos_c in [L_total / 3, 2 * L_total / 3]:
+        if xi <= pos_c <= xj:
+            a_c = pos_c - xi
+            b_c = xj - pos_c
+            Ri  =  P_carga * b_c**2 * (3*a_c + b_c) / Ls_**3
+            Rj  =  P_carga * a_c**2 * (a_c + 3*b_c) / Ls_**3
+            Mi  =  P_carga * a_c * b_c**2 / Ls_**2
+            Mj  = -P_carga * a_c**2 * b_c / Ls_**2
+            fef[1]  += Ri;  fef[5]  += Mi
+            fef[8]  += Rj;  fef[12] += Mj
+
+    F_vert_ext = 3 * P * e / L_total
+    if i_elem == 0:               fef[1] -= F_vert_ext   # extremo izq
+    if i_elem == num_nodos - 2:   fef[8] -= F_vert_ext   # extremo der
+
+    if i_elem == 0:               fef[0] += P            # axial izq
+    if i_elem == num_nodos - 2:   fef[7] -= P            # axial der
+
+    return fef
+
+# ══════════════════════════════════════════════════════════════════════
+# CALCULAR ESFUERZOS CORREGIDOS NODO POR NODO
+# Fe_real = Ke · de  −  FEF_elemento
+# ══════════════════════════════════════════════════════════════════════
+
+# Paso 1: calcular f_real en cada extremo de cada elemento
+esfuerzos_elem = {}
+
+for i_elem in range(num_nodos - 1):
+    Ls_ = nodos[i_elem + 1] - nodos[i_elem]
+    if Ls_ <= 0:
+        continue
+    dofs_i = np.arange(i_elem * 7,       i_elem * 7 + 7)
+    dofs_j = np.arange((i_elem + 1) * 7, (i_elem + 1) * 7 + 7)
+    u_e  = np.concatenate([u_global[dofs_i], u_global[dofs_j]])
+    Ke   = matriz_elemental(Ls_)
+    fef  = fef_elemento(Ls_, q, alpha)
+    if CONSIDERAR_PRETENSADO:
+        fef += fef_pretensado_elemento(Ls_, i_elem, P_pretensado,
+                                       e_pretensado, LTOTAL, nodos)
+    f_real = Ke @ u_e - fef
+    # extremo i: negado (fuerzas sobre la sección desde la izquierda)
+    # extremo j: directo
+    esfuerzos_elem[i_elem] = {
+        'i': -f_real[0:7],
+        'j':  f_real[7:14]
+    }
+
+# Paso 2: asignar esfuerzos a cada nodo
+# Nodos con salto (reacción o carga concentrada): tomar extremo j del elemento izquierdo
+# Nodos interiores continuos:                     tomar extremo i del elemento derecho
+nodos_salto = [0, 2, 6, 8]   # N1, N3, N7, N9
+
+esfuerzos_nodales = np.zeros((num_nodos, 7))
+
+for i_nodo in range(num_nodos):
+    if i_nodo in nodos_salto:
+        if i_nodo > 0 and (i_nodo - 1) in esfuerzos_elem:
+            f = esfuerzos_elem[i_nodo - 1]['j']
+            esfuerzos_nodales[i_nodo, :]  =  f
+            esfuerzos_nodales[i_nodo, 1]  = -f[1]   # Vy: convención opuesta
+        # N1 y N9 extremos libres → se corrigen abajo con equilibrio
+    else:
+        if i_nodo in esfuerzos_elem:
+            f = esfuerzos_elem[i_nodo]['i']
+            esfuerzos_nodales[i_nodo, :]  =  f
+            esfuerzos_nodales[i_nodo, 1]  = -f[1]   # Vy: convención opuesta
+
+# Corrección N1 y N9 (extremos libres — arrancan con la carga de pretensado)
+F_ps_val_vy = 3 * P_pretensado * e_pretensado / LTOTAL if CONSIDERAR_PRETENSADO else 0.0
+esfuerzos_nodales[0, 1] = -F_ps_val_vy   # Vy en N1
+esfuerzos_nodales[8, 1] =  0.0           # Vy en N9 (extremo libre simétrico)
+
+# -------------------------------
+# CREAR DATAFRAME CON LOS RESULTADOS
+# -------------------------------
+df_esfuerzos_nodos = pd.DataFrame(
+    esfuerzos_nodales,
+    columns=['N (kN)', 'Vy (kN)', 'Vz (kN)', 'Tx (kN·m)', 'My (kN·m)', 'Mz (kN·m)', 'Bx (kN·m²)'],
+    index=[f'N{i+1}' for i in range(num_nodos)]
+)
+
+df_esfuerzos_nodos.insert(0, 'Posición (m)', nodos)
+
+print("\n" + "="*140)
+print("TABLA DE ESFUERZOS EN CADA NODO")
+print("="*140)
+print(df_esfuerzos_nodos.to_string())
+
+# -------------------------------
+# FORMATO ALTERNATIVO: LISTA COMPLETA
+# -------------------------------
+print("\n" + "="*100)
+print("ESFUERZOS NODALES - FORMATO DETALLADO")
+print("="*100)
+print(f"{'Nodo':<8} {'Posición (m)':<15} {'N (kN)':<12} {'Vy (kN)':<12} {'Vz (kN)':<12} {'Tx (kN·m)':<12} {'My (kN·m)':<12} {'Mz (kN·m)':<12}")
+print("-"*100)
+
+for i in range(num_nodos):
+    nodo_label = f"N{i+1}"
+    if i == 2 or i == 6:  # Marcar nodos de izaje
+        nodo_label += " *"
+    
+    print(f"{nodo_label:<8} "
+          f"{nodos[i]:>14.3f} "
+          f"{esfuerzos_nodales[i, 0]:>11.4f} "
+          f"{esfuerzos_nodales[i, 1]:>11.4f} "
+          f"{esfuerzos_nodales[i, 2]:>11.4f} "
+          f"{esfuerzos_nodales[i, 3]:>11.4f} "
+          f"{esfuerzos_nodales[i, 4]:>11.4f} "
+          f"{esfuerzos_nodales[i, 5]:>11.4f}")
+
+print("\n* = Puntos de izaje")
+
+# -------------------------------
+# ESFUERZOS MÁXIMOS
+# -------------------------------
+print("\n" + "="*70)
+print("ESFUERZOS MÁXIMOS EN LOS NODOS")
+print("="*70)
+
+max_N_idx = np.argmax(np.abs(esfuerzos_nodales[:, 0]))
+max_Vy_idx = np.argmax(np.abs(esfuerzos_nodales[:, 1]))
+max_My_idx = np.argmax(np.abs(esfuerzos_nodales[:, 4]))
+max_Mz_idx = np.argmax(np.abs(esfuerzos_nodales[:, 5]))
+max_Tx_idx = np.argmax(np.abs(esfuerzos_nodales[:, 3]))
+
+print(f"Máxima fuerza axial (N):")
+print(f"  Nodo N{max_N_idx+1}: {esfuerzos_nodales[max_N_idx, 0]:.4f} kN")
+
+print(f"\nMáximo cortante vertical (Vy):")
+print(f"  Nodo N{max_Vy_idx+1}: {esfuerzos_nodales[max_Vy_idx, 1]:.4f} kN")
+
+print(f"\nMáximo momento flector My:")
+print(f"  Nodo N{max_My_idx+1}: {esfuerzos_nodales[max_My_idx, 4]:.4f} kN·m")
+
+print(f"\nMáximo momento flector Mz:")
+print(f"  Nodo N{max_Mz_idx+1}: {esfuerzos_nodales[max_Mz_idx, 5]:.4f} kN·m")
+
+print(f"\nMáximo momento torsor (Tx):")
+print(f"  Nodo N{max_Tx_idx+1}: {esfuerzos_nodales[max_Tx_idx, 3]:.4f} kN·m")
+
+
+
+# -------------------------------
+# GRÁFICOS DE DIAGRAMAS POR NODO
+# -------------------------------
+print("\n" + "="*70)
+print("GENERANDO DIAGRAMAS...")
+print("="*70)
+
+fig, axes = plt.subplots(5, 1, figsize=(16, 15))
+
+# Diagrama de fuerza axial
+axes[0].plot(nodos, esfuerzos_nodales[:, 0], 'o-', linewidth=2.5, markersize=8, color='blue', label='Fuerza Axial N')
+axes[0].axhline(y=0, color='k', linestyle='--', linewidth=0.8, alpha=0.5)
+axes[0].fill_between(nodos, esfuerzos_nodales[:, 0], alpha=0.3, color='blue')
+axes[0].set_ylabel('N (kN)', fontweight='bold', fontsize=11)
+axes[0].set_title('Diagrama de Fuerza Axial en Nodos', fontweight='bold', fontsize=13)
+axes[0].grid(True, alpha=0.3)
+axes[0].legend()
+
+# ============================================
+# CORRECCIÓN EN LÍNEA ~530
+# ============================================
+
+# Diagrama de cortante vertical
+axes[1].plot(nodos, esfuerzos_nodales[:, 1], 's-', 
+             linewidth=2.5, markersize=8, color='red', label='Cortante Vy')
+axes[1].axhline(y=0, color='k', linestyle='--', linewidth=0.8, alpha=0.5)
+axes[1].fill_between(nodos, esfuerzos_nodales[:, 1], alpha=0.3, color='red')
+axes[1].set_ylabel('Vy (kN)', fontweight='bold', fontsize=11)
+axes[1].set_title('Diagrama de Cortante Vertical', fontweight='bold', fontsize=13)
+axes[1].grid(True, alpha=0.3)
+axes[1].legend()
+
+# Diagrama de momento flector 
+axes[2].plot(nodos, esfuerzos_nodales[:, 5], '^-', 
+             linewidth=2.5, markersize=8, color='orange', label='Momento Mz')
+axes[2].axhline(y=0, color='k', linestyle='--', linewidth=0.8, alpha=0.5)
+axes[2].fill_between(nodos, esfuerzos_nodales[:, 5], alpha=0.3, color='orange')
+axes[2].set_ylabel('Mz (kN·m)', fontweight='bold', fontsize=11)  # ← CAMBIAR AQUÍ
+axes[2].set_title('Diagrama de Momento Flector Mz (Flexión Vertical)', 
+                  fontweight='bold', fontsize=13)  # ← ACLARAR TÍTULO
+axes[2].grid(True, alpha=0.3)
+axes[2].legend()
+
+# Diagrama de deflexión vertical 
+uy_values = [u_global[i*7 + 1] for i in range(num_nodos)]
+axes[3].plot(nodos, uy_values, 'd-', 
+             linewidth=2.5, markersize=8, color='purple', label='Deflexión v')
+axes[3].axhline(y=0, color='k', linestyle='--', linewidth=0.8, alpha=0.5)
+axes[3].fill_between(nodos, uy_values, alpha=0.3, color='purple')
+axes[3].set_ylabel('Deflexión v (m)', fontweight='bold', fontsize=11)
+axes[3].set_xlabel('Posición (m)', fontweight='bold', fontsize=11)
+axes[3].set_title('Deflexión Vertical', fontweight='bold', fontsize=13)
+axes[3].grid(True, alpha=0.3)
+axes[3].legend()
+
+# Diagrama de deflexión lateral 
+uy_values = [u_global[i*7 + 2] for i in range(num_nodos)]
+axes[4].plot(nodos, uy_values, 'd-', 
+             linewidth=2.5, markersize=8, color='grey', label='Deflexión z')
+axes[4].axhline(y=0, color='k', linestyle='--', linewidth=0.8, alpha=0.5)
+axes[4].fill_between(nodos, uy_values, alpha=0.3, color='grey')
+axes[4].set_ylabel('Deflexión z (m)', fontweight='bold', fontsize=11)
+axes[4].set_xlabel('Posición (m)', fontweight='bold', fontsize=11)
+axes[4].set_title('Deflexión Lateral', fontweight='bold', fontsize=13)
+axes[4].grid(True, alpha=0.3)
+axes[4].legend()
+
+
+# Marcar puntos de izaje en todos los gráficos
+for ax in axes:
+    ax.axvline(x=nodos[2], color='orange', linestyle=':', linewidth=2, alpha=0.7, label='Izaje')
+    ax.axvline(x=nodos[6], color='orange', linestyle=':', linewidth=2, alpha=0.7)
+
+plt.tight_layout()
+plt.show()
+
+print("✓ Diagramas generados exitosamente")
+
+
+
+# -------------------------------
+# GEOMETRÍA DE LA SECCIÓN PCI TIPO VI
+# -------------------------------
+import numpy as np
+import matplotlib.pyplot as plt
+from matplotlib.patches import Polygon
+from matplotlib.collections import PatchCollection
+
+# Dimensiones de la sección VI en METROS (convertidas de pulgadas)
+# 1 pulgada = 0.0254 metros
+
+D1 = 1.829   # 1.8288 m
+D2 = 0.127   # 0.127 m
+D3 = 0.076    # 0.0762 m
+D4 = 0.102    # 0.1016 m
+D5 = 0.254   # 0.254 m
+D6 = 0.203   # 0.2032 m
+
+B1 = 1.067   # 1.0668 m
+B2 = 0.711   # 0.7112 m
+B3 = 0.203    # 0.2032 m
+B4 = 0.102   # 0.1016 m
+B5 = 0.330   # 0.3302 m
+B6 = 0.254  # 0.254 m
+
+print("\n" + "="*70)
+print("DIMENSIONES DE LA SECCIÓN PCI TIPO VI")
+print("="*70)
+print(f"Altura total (D1):        {D1:.4f} m")
+print(f"Ancho superior (B1):      {B1:.4f} m")
+print(f"Ancho inferior (B2):      {B2:.4f} m")
+print(f"Ancho del alma:           {B3:.4f} m")
+
+# -------------------------------
+# DEFINIR COORDENADAS DE LA SECCIÓN
+# -------------------------------
+def crear_seccion_VI():
+    """
+    Crea las coordenadas de los vértices de la sección tipo VI
+    El origen está en el centroide (aproximadamente a mitad de altura)
+    """
+    
+    # Centroide aproximado (ajustar según necesites)
+    y_centroide = D1 / 2
+    
+    # Coordenadas de los vértices (en sentido antihorario)
+    # Parte superior (ala superior)
+    vertices = []
+    
+    # Ala superior
+    x1 = -B1/2
+    x2 = B1/2
+    y_top = D1 - y_centroide
+    
+    # Empezar desde esquina superior izquierda
+    vertices.append([x1, y_top])
+    vertices.append([x2, y_top])
+    
+    # Transición derecha superior
+    vertices.append([x2, y_top - D2])
+    vertices.append([x2 - (B1-B2)/2 + B3/2, y_top - D2 - D3])
+    
+    # Alma derecha
+    vertices.append([B3/2, y_top - D2 - D3])
+    vertices.append([B3/2, -y_centroide + D6 + D5])
+    
+    # Transición derecha inferior
+    vertices.append([B3/2 + B4, -y_centroide + D6 + D5])
+    vertices.append([B2/2, -y_centroide + D6])
+    
+    # Ala inferior derecha
+    vertices.append([B2/2, -y_centroide])
+    vertices.append([-B2/2, -y_centroide])
+    
+    # Transición izquierda inferior
+    vertices.append([-B2/2, -y_centroide + D6])
+    vertices.append([-(B3/2 + B4), -y_centroide + D6 + D5])
+    
+    # Alma izquierda
+    vertices.append([-B3/2, -y_centroide + D6 + D5])
+    vertices.append([-B3/2, y_top - D2 - D3])
+    
+    # Transición izquierda superior
+    vertices.append([-(x2 - (B1-B2)/2 + B3/2), y_top - D2 - D3])
+    vertices.append([x1, y_top - D2])
+    
+    return np.array(vertices)
+
+# -------------------------------
+# FUNCIÓN PARA CALCULAR ESFUERZOS EN LA SECCIÓN
+# -------------------------------
+def calcular_esfuerzos_seccion(N, Vy, My, Mz, nodo_num, vertices):
+    """
+    Calcula esfuerzos normales en la sección transversal
+    σ = N/A + My*z/Iy - Mz*y/Iz
+    
+    Parámetros:
+    - N: Fuerza axial (kN)
+    - Vy: Cortante vertical (kN)
+    - My: Momento flector respecto a y (kN·m)
+    - Mz: Momento flector respecto a z (kN·m)
+    - nodo_num: Número del nodo
+    - vertices: Coordenadas de la sección
+    """
+    
+    # Propiedades geométricas (ya las tienes definidas)
+    A = PA  # Área
+    Iy = PIF  # Momento de inercia respecto a y
+    Iz = PID  # Momento de inercia respecto a z
+    
+    # Crear una malla de puntos en la sección
+    y_min, y_max = vertices[:, 1].min(), vertices[:, 1].max()
+    z_min, z_max = vertices[:, 0].min(), vertices[:, 0].max()
+    
+    # Número de puntos en la malla
+    n_points = 100
+    y_grid = np.linspace(y_min, y_max, n_points)
+    z_grid = np.linspace(z_min, z_max, n_points)
+    
+    Z, Y = np.meshgrid(z_grid, y_grid)
+    
+    # Calcular esfuerzos normales en cada punto
+    # σ = N/A + My*z/Iy - Mz*y/Iz
+    # Nota: My genera esfuerzos que varían con z, Mz genera esfuerzos que varían con y
+    
+    sigma = (N * 1000) / A + (My * 1000000) * Z / Iy - (Mz * 1000000) * Y / Iz
+    # Conversión: kN → N, kN·m → N·mm
+    # Resultado en MPa (N/mm²)
+    sigma = sigma / 1000000  # Pa → MPa
+    
+    # Crear máscara para puntos dentro de la sección
+    from matplotlib.path import Path
+    path = Path(vertices)
+    points = np.column_stack([Z.ravel(), Y.ravel()])
+    mask = path.contains_points(points).reshape(Z.shape)
+    
+    # Aplicar máscara
+    sigma_masked = np.ma.masked_where(~mask, sigma)
+    
+    return Z, Y, sigma_masked, mask
+
+# -------------------------------
+# FUNCIÓN PARA GRAFICAR ESFUERZOS EN UN NODO
+# -------------------------------
+def graficar_esfuerzos_nodo(nodo_idx, esfuerzos_nodales, nodos):
+    """
+    Grafica la distribución de esfuerzos en la sección del nodo
+    """
+    
+    # Extraer esfuerzos del nodo
+    N = esfuerzos_nodales[nodo_idx, 0]    # kN
+    Vy = esfuerzos_nodales[nodo_idx, 1]   # kN
+    Vz = esfuerzos_nodales[nodo_idx, 2]   # kN
+    Tx = esfuerzos_nodales[nodo_idx, 3]   # kN·m
+    My = esfuerzos_nodales[nodo_idx, 4]   # kN·m
+    Mz = esfuerzos_nodales[nodo_idx, 5]   # kN·m
+    
+    # Crear geometría de la sección
+    vertices = crear_seccion_VI()
+    
+    # Calcular esfuerzos
+    Z, Y, sigma, mask = calcular_esfuerzos_seccion(N, Vy, My, Mz, nodo_idx+1, vertices)
+    
+    # Crear figura
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(16, 8))
+    
+    # -------------------------------
+    # Gráfico 1: Contorno de esfuerzos
+    # -------------------------------
+    
+    # Dibujar contorno de la sección
+    polygon = Polygon(vertices, fill=False, edgecolor='black', linewidth=2)
+    ax1.add_patch(polygon)
+    
+    # Graficar esfuerzos
+    levels = np.linspace(sigma.min(), sigma.max(), 20)
+    contour = ax1.contourf(Z, Y, sigma, levels=levels, cmap='RdBu_r', extend='both')
+    
+    # Línea de esfuerzo cero (eje neutro)
+    ax1.contour(Z, Y, sigma, levels=[0], colors='black', linewidths=2, linestyles='--')
+    
+    # Colorbar
+    cbar = plt.colorbar(contour, ax=ax1, label='Esfuerzo Normal σ (MPa)')
+    
+    # Etiquetas
+    ax1.set_xlabel('z (m)', fontweight='bold', fontsize=11)
+    ax1.set_ylabel('y (m)', fontweight='bold', fontsize=11)
+    ax1.set_title(f'Distribución de Esfuerzos - Nodo N{nodo_idx+1}\n'
+                  f'Posición: {nodos[nodo_idx]:.2f} m', 
+                  fontweight='bold', fontsize=13)
+    ax1.set_aspect('equal')
+    ax1.grid(True, alpha=0.3)
+    
+    # -------------------------------
+    # Gráfico 2: Esfuerzos en 3D
+    # -------------------------------
+    ax2 = fig.add_subplot(122, projection='3d')
+    
+    # Superficie 3D de esfuerzos
+    surf = ax2.plot_surface(Z, Y, sigma, cmap='RdBu_r', 
+                           edgecolor='none', alpha=0.8)
+    
+    # Contorno de la sección en z=0
+    for i in range(len(vertices)):
+        j = (i + 1) % len(vertices)
+        ax2.plot([vertices[i, 0], vertices[j, 0]], 
+                [vertices[i, 1], vertices[j, 1]], 
+                [0, 0], 'k-', linewidth=2)
+    
+    # Etiquetas
+    ax2.set_xlabel('z (m)', fontweight='bold')
+    ax2.set_ylabel('y (m)', fontweight='bold')
+    ax2.set_zlabel('σ (MPa)', fontweight='bold')
+    ax2.set_title(f'Esfuerzos 3D - Nodo N{nodo_idx+1}', fontweight='bold')
+    
+    # Colorbar
+    fig.colorbar(surf, ax=ax2, shrink=0.5, aspect=5)
+    
+    # -------------------------------
+    # Información de esfuerzos
+    # -------------------------------
+    info_text = f"""
+    ESFUERZOS EN EL NODO N{nodo_idx+1}:
+    
+    Fuerza Axial (N):        {N:>10.4f} kN
+    Cortante Vy:             {Vy:>10.4f} kN
+    Cortante Vz:             {Vz:>10.4f} kN
+    Momento My:              {My:>10.4f} kN·m
+    Momento Mz:              {Mz:>10.4f} kN·m
+    
+    Esfuerzo máximo:         {sigma.max():>10.4f} MPa
+    Esfuerzo mínimo:         {sigma.min():>10.4f} MPa
+    """
+    
+    fig.text(0.5, 0.02, info_text, ha='center', fontsize=10, 
+             family='monospace', bbox=dict(boxstyle='round', 
+             facecolor='wheat', alpha=0.5))
+    
+    plt.tight_layout(rect=[0, 0.12, 1, 1])
+    
+    return fig
+
+
+"""
+CÓDIGO PARA VISUALIZACIÓN DE ESFUERZOS EN SECCIÓN PCI VI
+Para integrar directamente al código de análisis estructural
+
+Sistema de unidades: SI
+- Fuerzas: kN
+- Momentos: kN·m
+- Longitudes: m
+- Esfuerzos: MPa (se calculan internamente)
+"""
+
+
+# ==============================================================================
+# FUNCIONES PARA CREAR GEOMETRÍA DE LA SECCIÓN
+# ==============================================================================
+
+def crear_geometria_seccion_VI():
+    """
+    Crea las coordenadas de los vértices de la sección PCI tipo VI
+    Dimensiones en METROS (sistema SI)
+    
+    Retorna:
+    --------
+    vertices : array (n_vertices, 2)
+        Coordenadas [z, y] de los vértices de la sección
+    """
+    # Dimensiones de la sección VI en METROS
+    D1 = 1.829   # Altura total
+    D2 = 0.127
+    D3 = 0.076
+    D4 = 0.102
+    D5 = 0.254
+    D6 = 0.203
+    
+    B1 = 1.067   # Ancho superior
+    B2 = 0.711   # Ancho inferior
+    B3 = 0.203   # Ancho del alma
+    B4 = 0.102
+    
+    # Centroide aproximado (a mitad de altura)
+    y_centroide = D1 / 2
+    
+    # Coordenadas de los vértices (sentido antihorario)
+    vertices = []
+    
+    # Ala superior
+    x1 = -B1/2
+    x2 = B1/2
+    y_top = D1 - y_centroide
+    
+    vertices.append([x1, y_top])
+    vertices.append([x2, y_top])
+    
+    # Transición derecha superior
+    vertices.append([x2, y_top - D2])
+    vertices.append([x2 - (B1-B2)/2 + B3/2, y_top - D2 - D3])
+    
+    # Alma derecha
+    vertices.append([B3/2, y_top - D2 - D3])
+    vertices.append([B3/2, -y_centroide + D6 + D5])
+    
+    # Transición derecha inferior
+    vertices.append([B3/2 + B4, -y_centroide + D6 + D5])
+    vertices.append([B2/2, -y_centroide + D6])
+    
+    # Ala inferior
+    vertices.append([B2/2, -y_centroide])
+    vertices.append([-B2/2, -y_centroide])
+    
+    # Transición izquierda inferior
+    vertices.append([-B2/2, -y_centroide + D6])
+    vertices.append([-(B3/2 + B4), -y_centroide + D6 + D5])
+    
+    # Alma izquierda
+    vertices.append([-B3/2, -y_centroide + D6 + D5])
+    vertices.append([-B3/2, y_top - D2 - D3])
+    
+    # Transición izquierda superior
+    vertices.append([-(x2 - (B1-B2)/2 + B3/2), y_top - D2 - D3])
+    vertices.append([x1, y_top - D2])
+    
+    return np.array(vertices)
+
+
+# ==============================================================================
+# FUNCIÓN PRINCIPAL PARA CALCULAR ESFUERZOS
+# ==============================================================================
+
+def calcular_esfuerzos_seccion(N, My, Mz, A, Iy, Iz, vertices, n_points=200):
+    """
+    Calcula la distribución de esfuerzos normales en la sección transversal
+    
+    Fórmula de esfuerzos normales (flexión compuesta):
+    σ = N/A + (My × z)/Iy - (Mz × y)/Iz
+    
+    Parámetros:
+    -----------
+    N : float
+        Fuerza axial [kN] (+ tensión, - compresión)
+    My : float
+        Momento flector respecto a eje y [kN·m]
+        (causa flexión en el plano horizontal)
+    Mz : float
+        Momento flector respecto a eje z [kN·m]
+        (causa flexión en el plano vertical)
+    A : float
+        Área de la sección [m²]
+    Iy : float
+        Momento de inercia respecto a eje y [m⁴]
+    Iz : float
+        Momento de inercia respecto a eje z [m⁴]
+    vertices : array
+        Coordenadas de los vértices de la sección
+    n_points : int
+        Resolución de la malla
+    
+    Retorna:
+    --------
+    Z, Y : arrays 2D
+        Coordenadas de la malla
+    sigma : masked array 2D
+        Esfuerzos normales [MPa]
+    mask : array booleano
+        Máscara de puntos dentro de la sección
+    """
+    # Límites de la sección
+    y_min, y_max = vertices[:, 1].min(), vertices[:, 1].max()
+    z_min, z_max = vertices[:, 0].min(), vertices[:, 0].max()
+    
+    # Crear malla de puntos
+    y_grid = np.linspace(y_min, y_max, n_points)
+    z_grid = np.linspace(z_min, z_max, n_points)
+    Z, Y = np.meshgrid(z_grid, y_grid)
+    
+    # CÁLCULO DE ESFUERZOS NORMALES
+    # ------------------------------
+    # Sistema SI: kN, m → Pa → MPa
+    
+    # Término 1: Esfuerzo axial uniforme
+    # N está en kN → convertir a N → dividir por A en m²
+    sigma_axial = (N * 1000) / A  # Pa
+    
+    # Término 2: Esfuerzo por momento My
+    # My está en kN·m → convertir a N·m
+    # z está en m, Iy en m⁴
+    sigma_My = (My * 1000) * Z / Iy  # Pa
+    
+    # Término 3: Esfuerzo por momento Mz
+    # Mz está en kN·m → convertir a N·m
+    # y está en m, Iz en m⁴
+    sigma_Mz = -(Mz * 1000) * Y / Iz  # Pa
+    
+    # Esfuerzo total
+    sigma = sigma_axial + sigma_My + sigma_Mz  # Pa
+    
+    # Convertir a MPa para visualización
+    sigma = sigma / 1e6  # MPa
+    
+    # Crear máscara para puntos dentro de la sección
+    path = Path(vertices)
+    points = np.column_stack([Z.ravel(), Y.ravel()])
+    mask = path.contains_points(points).reshape(Z.shape)
+    
+    # Aplicar máscara
+    sigma_masked = np.ma.masked_where(~mask, sigma)
+    
+    return Z, Y, sigma_masked, mask
+
+
+
+
+
+
+
+
+# ============================================================================
+# BLOQUE FINAL: DIAGRAMAS CORREGIDOS POR EQUILIBRIO ACUMULADO
+# ============================================================================
+
+# ── Fuerzas internas por equilibrio acumulado desde x=0 ──────────────
+F_ps_val = 3 * P_pretensado * e_pretensado / LTOTAL if CONSIDERAR_PRETENSADO else 0.0
+
+cargas_vert = {}
+if CONSIDERAR_PRETENSADO:
+    cargas_vert[nodos[0]]   = cargas_vert.get(nodos[0], 0.0)   - F_ps_val  # N1 ↓
+    cargas_vert[nodos[8]]   = cargas_vert.get(nodos[8], 0.0)   - F_ps_val  # N9 ↓
+    cargas_vert[LTOTAL/3]   = cargas_vert.get(LTOTAL/3, 0.0)   + F_ps_val  # ↑
+    cargas_vert[2*LTOTAL/3] = cargas_vert.get(2*LTOTAL/3, 0.0) + F_ps_val  # ↑
+
+cargas_vert[nodos[2]] = cargas_vert.get(nodos[2], 0.0) + R_v3
+cargas_vert[nodos[6]] = cargas_vert.get(nodos[6], 0.0) + R_v7
+
+todos_x = sorted(set(list(nodos) + list(cargas_vert.keys())))
+
+Vy_acum = 0.0
+Mz_acum = 0.0
+x_prev  = 0.0
+tabla_eq = []
+
+Vy_acum += cargas_vert.get(0.0, 0.0)
+tabla_eq.append((0.0, Vy_acum, Mz_acum))
+
+for x in todos_x[1:]:
+    dx = x - x_prev
+    Mz_acum += Vy_acum * dx - q * dx**2 / 2
+    Vy_acum -= q * dx
+    Fc = cargas_vert.get(x, 0.0)
+    if abs(Fc) > 1e-8:
+        tabla_eq.append((x, Vy_acum, Mz_acum))   # punto antes del salto
+        Vy_acum += Fc
+    tabla_eq.append((x, Vy_acum, Mz_acum))
+    x_prev = x
+
+# Arrays continuos para graficar
+x_eq  = np.array([t[0] for t in tabla_eq])
+Vy_eq = np.array([t[1] for t in tabla_eq])
+Mz_eq = np.array([t[2] for t in tabla_eq])
+
+# Esfuerzos en nodos (para tabla)
+esfuerzos_eq = np.zeros((num_nodos, 7))
+for i_nodo, xn in enumerate(nodos):
+    vals = [(Vy, Mz) for (x, Vy, Mz) in tabla_eq if abs(x - xn) < 1e-6]
+    if vals:
+        if i_nodo in [2, 6]:
+            esfuerzos_eq[i_nodo, 1] = vals[0][0]   # antes de la reacción
+            esfuerzos_eq[i_nodo, 5] = vals[0][1]
+        else:
+            esfuerzos_eq[i_nodo, 1] = vals[-1][0]
+            esfuerzos_eq[i_nodo, 5] = vals[-1][1]
+
+# ── Deflexión vertical continua por funciones de Hermite ─────────────
+x_defl = []; v_defl = []
+for i in range(num_nodos - 1):
+    Ls_ = nodos[i+1] - nodos[i]
+    if Ls_ <= 0: continue
+    vi_   = u_global[i*7 + 1];    tzi_  = u_global[i*7 + 5]
+    vj_   = u_global[(i+1)*7 + 1]; tzj_ = u_global[(i+1)*7 + 5]
+    for xl in np.linspace(0, Ls_, 60):
+        xi_ = xl / Ls_
+        N1 = 1 - 3*xi_**2 + 2*xi_**3
+        N2 = Ls_*(xi_ - 2*xi_**2 + xi_**3)
+        N3 = 3*xi_**2 - 2*xi_**3
+        N4 = Ls_*(-xi_**2 + xi_**3)
+        x_defl.append(nodos[i] + xl)
+        v_defl.append((N1*vi_ + N2*tzi_ + N3*vj_ + N4*tzj_)*1000)
+
+x_defl = np.array(x_defl)
+v_defl = np.array(v_defl)
+v_nodos_mm = [u_global[i*7+1]*1000 for i in range(num_nodos)]
+
+# ── Tabla de resultados en consola ───────────────────────────────────
+print("\n" + "="*60)
+print("FUERZAS INTERNAS — EQUILIBRIO ACUMULADO")
+print("="*60)
+print(f"{'Nodo':<6} {'x(m)':>6} | {'Vy(kN)':>10} {'Mz(kN·m)':>12}")
+print("-"*40)
+for i in range(num_nodos):
+    print(f"N{i+1:<5} {nodos[i]:>6.2f} | "
+          f"{esfuerzos_eq[i,1]:>10.4f} "
+          f"{esfuerzos_eq[i,5]:>12.4f}")
+
+print(f"\nDeflexión máxima (N5): {v_nodos_mm[4]:.4f} mm")
+print(f"Vy_max = {np.max(np.abs(esfuerzos_eq[:,1])):.4f} kN")
+print(f"Mz_max = {np.max(np.abs(esfuerzos_eq[:,5])):.4f} kN·m")
+
+# ── Gráficos ─────────────────────────────────────────────────────────
+fig, axes = plt.subplots(3, 1, figsize=(16, 14))
+
+def marcar_apoyos(ax):
+    for xa in [nodos[2], nodos[6]]:
+        ax.axvline(xa, color='orange', linestyle=':', linewidth=2, alpha=0.8)
+
+# 1) Cortante
+axes[0].plot(x_eq, Vy_eq, 'r-', linewidth=2.5, label='Cortante Vy')
+axes[0].fill_between(x_eq, Vy_eq, 0, alpha=0.25, color='red')
+axes[0].axhline(0, color='k', lw=0.8, ls='--', alpha=0.5)
+marcar_apoyos(axes[0])
+for idx, (i_ap, R, col, nom) in enumerate([(2, R_v3,'blue','N3'), (6, R_v7,'green','N7')]):
+    axes[0].annotate(f'R_{nom}={R:.1f} kN',
+                     xy=(nodos[i_ap], 0), xytext=(nodos[i_ap], Vy_eq.max()*0.5),
+                     ha='center', fontsize=10, color=col, fontweight='bold',
+                     arrowprops=dict(arrowstyle='->', lw=2, color=col),
+                     bbox=dict(boxstyle='round', facecolor='white', edgecolor=col))
+axes[0].scatter(nodos, esfuerzos_eq[:,1], s=60, color='darkred', zorder=5)
+axes[0].set_ylabel('Vy (kN)', fontweight='bold', fontsize=12)
+axes[0].set_title('Diagrama de Cortante Vertical (Equilibrio Acumulado)',
+                  fontweight='bold', fontsize=13)
+axes[0].grid(True, alpha=0.3)
+axes[0].legend(fontsize=10)
+axes[0].set_xlim([-0.5, LTOTAL+0.5])
+
+# 2) Momento flector
+axes[1].plot(x_eq, Mz_eq, '-', color='darkorange', linewidth=2.5, label='Momento Mz')
+axes[1].fill_between(x_eq, Mz_eq, 0, alpha=0.25, color='orange')
+axes[1].axhline(0, color='k', lw=0.8, ls='--', alpha=0.5)
+marcar_apoyos(axes[1])
+axes[1].scatter(nodos, esfuerzos_eq[:,5], s=60, color='saddlebrown', zorder=5)
+idx_Mmax = np.argmin(Mz_eq)   # mínimo = mayor magnitud negativa
+axes[1].annotate(f'Mz={Mz_eq[idx_Mmax]:.1f} kN·m',
+                 xy=(x_eq[idx_Mmax], Mz_eq[idx_Mmax]),
+                 xytext=(x_eq[idx_Mmax]+2, Mz_eq[idx_Mmax]*0.85),
+                 fontsize=10, color='darkred', fontweight='bold',
+                 arrowprops=dict(arrowstyle='->', lw=1.5, color='darkred'))
+axes[1].set_ylabel('Mz (kN·m)', fontweight='bold', fontsize=12)
+axes[1].set_title('Diagrama de Momento Flector Mz (Equilibrio Acumulado)',
+                  fontweight='bold', fontsize=13)
+axes[1].grid(True, alpha=0.3)
+axes[1].legend(fontsize=10)
+axes[1].set_xlim([-0.5, LTOTAL+0.5])
+
+# 3) Deflexión vertical
+axes[2].plot(x_defl, v_defl, '-', color='purple', linewidth=2.5, label='Deflexión v')
+axes[2].plot(nodos, v_nodos_mm, 'o', color='purple', ms=8, mec='white',
+             mew=1.5, zorder=5, label='Nodos MEF')
+axes[2].fill_between(x_defl, v_defl, 0, alpha=0.2, color='purple')
+axes[2].axhline(0, color='k', lw=0.8, ls='--', alpha=0.5)
+marcar_apoyos(axes[2])
+axes[2].annotate(f'v_max={v_nodos_mm[4]:.2f} mm',
+                 xy=(nodos[4], v_nodos_mm[4]),
+                 xytext=(nodos[4]+2, v_nodos_mm[4]*0.8),
+                 fontsize=10, color='purple', fontweight='bold',
+                 arrowprops=dict(arrowstyle='->', lw=1.5, color='purple'))
+axes[2].set_ylabel('Deflexión v (mm)', fontweight='bold', fontsize=12)
+axes[2].set_xlabel('Posición (m)', fontweight='bold', fontsize=12)
+axes[2].set_title('Deflexión Vertical (Funciones de Hermite)',
+                  fontweight='bold', fontsize=13)
+axes[2].grid(True, alpha=0.3)
+axes[2].legend(fontsize=10)
+axes[2].set_xlim([-0.5, LTOTAL+0.5])
+
+plt.suptitle(
+    f'Viga PCI Tipo VI — Izaje | L={LTOTAL}m | a={a_L * LTOTAL:.1f}m | '
+    f'P_ps={P_pretensado:.0f}kN | e={e_pretensado}m',
+    fontsize=13, fontweight='bold'
+)
+plt.tight_layout()
+plt.show()
+
+print("\n✅ Diagramas corregidos completados")
+
+
+
+# ============================================================================
+# ESFUERZOS EN FIBRAS EXTREMAS PARA CADA NODO
+# ============================================================================
+
+# ============================================================================
+# MOMENTO MÁXIMO REAL Y ESFUERZOS EN ESA SECCIÓN
+# ============================================================================
+
+# Encontrar posición y valor del momento máximo en magnitud
+idx_Mmax_real = np.argmax(np.abs(Mz_eq))
+x_Mmax        = x_eq[idx_Mmax_real]
+Mz_max_real   = Mz_eq[idx_Mmax_real]
+
+print("\n" + "="*70)
+print("MOMENTO MÁXIMO REAL")
+print("="*70)
+print(f"  Posición:  x = {x_Mmax:.4f} m")
+print(f"  Valor:     Mz = {Mz_max_real:.4f} kN·m")
+
+# Esfuerzos en esa sección
+D1    = 1.829
+yc    = 0.9140
+y_sup =  D1 - yc
+y_inf = -yc
+N_axial = -P_pretensado if CONSIDERAR_PRETENSADO else 0.0
+
+sigma_sup_max = ((N_axial / PA) - (Mz_max_real * y_sup / PIF)) / 1000  # MPa
+sigma_inf_max = ((N_axial / PA) - (Mz_max_real * y_inf / PIF)) / 1000  # MPa
+
+print(f"\n  Esfuerzos en la sección de momento máximo:")
+print(f"  σ_sup = {sigma_sup_max:.4f} MPa  "
+      f"({'COMPRESIÓN' if sigma_sup_max < 0 else 'TENSIÓN'})")
+print(f"  σ_inf = {sigma_inf_max:.4f} MPa  "
+      f"({'COMPRESIÓN' if sigma_inf_max < 0 else 'TENSIÓN'})")
+
+# Propiedades geométricas de la sección PCI VI
+D1 = 1.829       # Altura total (m)
+yc = 0.9140      # Centroide desde la fibra inferior (m) — valor PCI VI
+y_sup =  D1 - yc # Distancia centroide → fibra superior (m)
+y_inf = -yc      # Distancia centroide → fibra inferior (m)
+
+# Fuerza axial de pretensado (compresión = negativa)
+N_axial = -P_pretensado if CONSIDERAR_PRETENSADO else 0.0  # kN
+
+print("\n" + "="*100)
+print("ESFUERZOS EN FIBRAS EXTREMAS POR SECCIÓN (Flexión Vertical + Axial)")
+print("="*100)
+print(f"  Propiedades: A={PA} m²  |  Iz={PIF} m⁴  |  yc={yc} m")
+print(f"  y_sup = +{y_sup:.4f} m  (fibra superior)")
+print(f"  y_inf =  {y_inf:.4f} m  (fibra inferior)")
+print(f"  N_axial = {N_axial:.1f} kN  ({'compresión' if N_axial < 0 else 'tensión'})")
+print("="*100)
+print(f"\n{'Nodo':<6} {'x(m)':>6} | {'Mz(kN·m)':>12} | "
+      f"{'σ_sup(MPa)':>12} {'σ_inf(MPa)':>12} | "
+      f"{'Estado sup':>14} {'Estado inf':>14}")
+print("-"*100)
+
+resultados_secciones = []
+
+for i in range(num_nodos):
+    xn    = nodos[i]
+    Mz_n  = esfuerzos_eq[i, 5]   # kN·m
+    
+    # σ = N/A  -  Mz·y / Iz     (unidades: kN, m → kPa → /1000 → MPa)
+    sigma_sup = (N_axial / PA) - (Mz_n * y_sup / PIF)   # kPa
+    sigma_inf = (N_axial / PA) - (Mz_n * y_inf / PIF)   # kPa
+    
+    sigma_sup_MPa = sigma_sup / 1000   # MPa
+    sigma_inf_MPa = sigma_inf / 1000   # MPa
+    
+    # Clasificación
+    def estado(s):
+        if s < -0.5:  return "COMPRESIÓN"
+        if s >  0.5:  return "TENSIÓN"
+        return "≈ NEUTRO"
+    
+    estado_sup = estado(sigma_sup_MPa)
+    estado_inf = estado(sigma_inf_MPa)
+    
+    resultados_secciones.append({
+        'Nodo': f'N{i+1}',
+        'x (m)': xn,
+        'Mz (kN·m)': round(Mz_n, 2),
+        'σ_sup (MPa)': round(sigma_sup_MPa, 4),
+        'σ_inf (MPa)': round(sigma_inf_MPa, 4),
+        'Estado sup': estado_sup,
+        'Estado inf': estado_inf,
+    })
+    
+    marca = " *" if i in [2, 6] else ""
+    print(f"N{i+1:<4}{marca:<2} {xn:>6.2f} | "
+          f"{Mz_n:>12.2f} | "
+          f"{sigma_sup_MPa:>12.4f} {sigma_inf_MPa:>12.4f} | "
+          f"{estado_sup:>14} {estado_inf:>14}")
+
+print("-"*100)
+print("  * = apoyos de izaje    |    σ = N/A − Mz·y/Iz    |    + tensión / − compresión")
+
+# ── DataFrame para visualización ─────────────────────────────────────
+df_secciones = pd.DataFrame(resultados_secciones)
+print("\n" + "="*100)
+print("TABLA RESUMEN — DataFrame")
+print("="*100)
+print(df_secciones.to_string(index=False))
+
+# ── Valores críticos ─────────────────────────────────────────────────
+print("\n" + "="*70)
+print("VALORES CRÍTICOS")
+print("="*70)
+
+idx_max_comp_sup = df_secciones['σ_sup (MPa)'].idxmin()
+idx_max_tens_inf = df_secciones['σ_inf (MPa)'].idxmax()
+idx_max_comp_inf = df_secciones['σ_inf (MPa)'].idxmin()
+idx_max_tens_sup = df_secciones['σ_sup (MPa)'].idxmax()
+
+print(f"\nMáxima COMPRESIÓN en fibra superior:")
+r = df_secciones.iloc[idx_max_comp_sup]
+print(f"  {r['Nodo']} @ x={r['x (m)']:.2f}m  →  σ_sup = {r['σ_sup (MPa)']:.4f} MPa")
+
+print(f"\nMáxima TENSIÓN en fibra inferior:")
+r = df_secciones.iloc[idx_max_tens_inf]
+print(f"  {r['Nodo']} @ x={r['x (m)']:.2f}m  →  σ_inf = {r['σ_inf (MPa)']:.4f} MPa")
+
+print(f"\nMáxima COMPRESIÓN en fibra inferior:")
+r = df_secciones.iloc[idx_max_comp_inf]
+print(f"  {r['Nodo']} @ x={r['x (m)']:.2f}m  →  σ_inf = {r['σ_inf (MPa)']:.4f} MPa")
+
+print(f"\nMáxima TENSIÓN en fibra superior:")
+r = df_secciones.iloc[idx_max_tens_sup]
+print(f"  {r['Nodo']} @ x={r['x (m)']:.2f}m  →  σ_sup = {r['σ_sup (MPa)']:.4f} MPa")
+
+# ── Gráfico de esfuerzos ──────────────────────────────────────────────
+fig, ax = plt.subplots(figsize=(16, 6))
+
+x_plot = df_secciones['x (m)']
+s_sup  = df_secciones['σ_sup (MPa)']
+s_inf  = df_secciones['σ_inf (MPa)']
+
+ax.plot(x_plot, s_sup, 'b-o', linewidth=2.5, markersize=8,
+        label='σ fibra superior', zorder=4)
+ax.plot(x_plot, s_inf, 'r-o', linewidth=2.5, markersize=8,
+        label='σ fibra inferior', zorder=4)
+ax.fill_between(x_plot, s_sup, s_inf, alpha=0.10, color='gray',
+                label='Rango σ sección')
+ax.axhline(0, color='k', lw=0.8, ls='--', alpha=0.6)
+
+# Límites de referencia (opcional — ajusta según tu normativa)
+ax.axhline( 0.6*fc, color='green',  lw=1.2, ls=':', alpha=0.7,
+            label=f'0.6·fc = {0.6*fc:.1f} MPa (comp. admisible)')
+ax.axhline(-0.6*fc, color='green',  lw=1.2, ls=':', alpha=0.7)
+
+for xa in [nodos[2], nodos[6]]:
+    ax.axvline(xa, color='orange', lw=2, ls=':', alpha=0.8)
+
+# Anotar valores en cada nodo
+for i, row in df_secciones.iterrows():
+    ax.annotate(f"{row['σ_sup (MPa)']:.2f}",
+                xy=(row['x (m)'], row['σ_sup (MPa)']),
+                xytext=(0, 8), textcoords='offset points',
+                ha='center', fontsize=8, color='blue')
+    ax.annotate(f"{row['σ_inf (MPa)']:.2f}",
+                xy=(row['x (m)'], row['σ_inf (MPa)']),
+                xytext=(0, -14), textcoords='offset points',
+                ha='center', fontsize=8, color='red')
+
+ax.set_xlabel('Posición (m)', fontweight='bold', fontsize=12)
+ax.set_ylabel('Esfuerzo normal σ (MPa)', fontweight='bold', fontsize=12)
+ax.set_title(
+    f'Esfuerzos en Fibras Extremas — Viga PCI Tipo VI\n'
+    f'L={LTOTAL}m | a={a_L*LTOTAL:.1f}m | P_ps={P_pretensado:.0f}kN | '
+    f'e={e_pretensado}m | N_axial={N_axial:.0f}kN',
+    fontweight='bold', fontsize=13)
+ax.set_xlim([-0.5, LTOTAL+0.5])
+ax.legend(fontsize=10, loc='best')
+ax.grid(True, alpha=0.3)
+
+# Marcar posición del momento máximo
+ax.axvline(x_Mmax, color='darkred', lw=2, ls='--', alpha=0.8,
+           label=f'Mz_max @ x={x_Mmax:.2f}m')
+ax.plot(x_Mmax, sigma_sup_max, 'b*', ms=14, zorder=6)
+ax.plot(x_Mmax, sigma_inf_max, 'r*', ms=14, zorder=6)
+ax.annotate(f"x={x_Mmax:.2f}m\nMz={Mz_max_real:.1f}kN·m",
+            xy=(x_Mmax, min(sigma_sup_max, sigma_inf_max)),
+            xytext=(x_Mmax + 1.5, min(sigma_sup_max, sigma_inf_max) * 0.7),
+            fontsize=9, color='darkred', fontweight='bold',
+            arrowprops=dict(arrowstyle='->', lw=1.5, color='darkred'),
+            bbox=dict(boxstyle='round', facecolor='white', edgecolor='darkred'))
+
+plt.tight_layout()
+plt.show()
+
+print("\n✅ Esfuerzos en secciones completados")
+
+
+# ============================================================================
+# DIBUJO DE SECCIONES TRANSVERSALES CON ESFUERZOS Y GIRO θx
+# ============================================================================
+from matplotlib.path import Path
+from matplotlib.patches import PathPatch
+from matplotlib.colors import Normalize
+from matplotlib.cm import ScalarMappable
+import matplotlib.cm as cm
+
+def get_vertices_PCI_VI():
+    D1=1.829; D2=0.127; D3=0.076; D5=0.254; D6=0.203
+    B1=1.067; B2=0.711; B3=0.203; B4=0.102
+    yc = 0.9140
+    y_top = D1 - yc
+    x2 = B1/2
+    v = []
+    v.append([-B1/2,  y_top])
+    v.append([ B1/2,  y_top])
+    v.append([ B1/2,  y_top - D2])
+    v.append([ x2-(B1-B2)/2+B3/2, y_top-D2-D3])
+    v.append([ B3/2,  y_top-D2-D3])
+    v.append([ B3/2, -yc+D6+D5])
+    v.append([ B3/2+B4, -yc+D6+D5])
+    v.append([ B2/2, -yc+D6])
+    v.append([ B2/2, -yc])
+    v.append([-B2/2, -yc])
+    v.append([-B2/2, -yc+D6])
+    v.append([-(B3/2+B4), -yc+D6+D5])
+    v.append([-B3/2, -yc+D6+D5])
+    v.append([-B3/2,  y_top-D2-D3])
+    v.append([-(x2-(B1-B2)/2+B3/2), y_top-D2-D3])
+    v.append([-B1/2,  y_top-D2])
+    return np.array(v)
+
+def rotar_vertices(verts, theta):
+    c, s = np.cos(theta), np.sin(theta)
+    R = np.array([[c, -s],[s,  c]])
+    return verts @ R.T
+
+def calcular_sigma_seccion(verts_rot, N_kN, Mz_kNm, My_kNm, n=150):
+    y_min, y_max = verts_rot[:,1].min(), verts_rot[:,1].max()
+    z_min, z_max = verts_rot[:,0].min(), verts_rot[:,0].max()
+    zg, yg = np.meshgrid(np.linspace(z_min, z_max, n),
+                          np.linspace(y_min, y_max, n))
+    path  = Path(verts_rot)
+    pts   = np.column_stack([zg.ravel(), yg.ravel()])
+    mask  = path.contains_points(pts).reshape(zg.shape)
+    sigma = (N_kN / PA) - (Mz_kNm * yg / PIF) + (My_kNm * zg / PID)  # kPa
+    sigma_MPa = np.ma.masked_where(~mask, sigma / 1000)
+    return zg, yg, sigma_MPa, mask
+
+def graficar_seccion(ax_sec, ax_info, nodo_idx, x_pos, Mz_val, My_val, theta_x):
+
+    N_kN   = -P_pretensado if CONSIDERAR_PRETENSADO else 0.0
+    Mz_kNm = Mz_val
+    My_kNm = My_val
+
+    verts_orig = get_vertices_PCI_VI()
+
+    # Si Grados=0 no rotar la sección visualmente
+    theta_visual = theta_x if Grados != 0 else 0.0
+    verts_rot  = rotar_vertices(verts_orig, theta_visual)
+
+    zg, yg, sigma, mask = calcular_sigma_seccion(verts_rot, N_kN, Mz_kNm, My_kNm)
+
+    vmax = max(abs(float(sigma.min())), abs(float(sigma.max())))
+    if vmax < 1e-6: vmax = 1.0
+    norm = Normalize(vmin=-vmax, vmax=vmax)
+    cmap = cm.RdBu_r
+
+    cf = ax_sec.contourf(zg, yg, sigma, levels=40,
+                          cmap=cmap, norm=norm, extend='both')
+    try:
+        ax_sec.contour(zg, yg, sigma, levels=[0],
+                       colors='black', linewidths=2, linestyles='--')
+    except Exception:
+        pass
+
+    patch_verts = np.vstack([verts_rot, verts_rot[0]])
+    ax_sec.plot(patch_verts[:,0], patch_verts[:,1], 'k-', linewidth=2)
+    plt.colorbar(cf, ax=ax_sec, label='σ (MPa)', fraction=0.03, pad=0.04)
+
+    y_v = verts_rot[:, 1]
+    z_v = verts_rot[:, 0]
+    sigma_v = (N_kN/PA - Mz_kNm*y_v/PIF + My_kNm*z_v/PID) / 1000
+
+    if Grados == 0:
+        # flechas al centro del ala superior e inferior, sin rotación
+        y_sup_val = y_v.max()
+        y_inf_val = y_v.min()
+
+        mask_sup = np.abs(y_v - y_sup_val) < 1e-3
+        z_sup_c  = np.mean(z_v[mask_sup]) if mask_sup.any() else 0.0
+
+        mask_inf = np.abs(y_v - y_inf_val) < 1e-3
+        z_inf_c  = np.mean(z_v[mask_inf]) if mask_inf.any() else 0.0
+
+        s_sup = (N_kN/PA - Mz_kNm*y_sup_val/PIF + My_kNm*z_sup_c/PID) / 1000
+        s_inf = (N_kN/PA - Mz_kNm*y_inf_val/PIF + My_kNm*z_inf_c/PID) / 1000
+
+        pt_max = (z_sup_c, y_sup_val, s_sup)
+        pt_min = (z_inf_c, y_inf_val, s_inf)
+
+        ax_sec.annotate(
+            f"σ=sup\n{pt_max[2]:.3f} MPa",
+            xy=(pt_max[0], pt_max[1]),
+            xytext=(pt_max[0], pt_max[1] + 0.25),
+            fontsize=8, color='darkred', fontweight='bold',
+            ha='center',
+            arrowprops=dict(arrowstyle='->', color='darkred', lw=2),
+            bbox=dict(boxstyle='round', facecolor='white',
+                      edgecolor='darkred', alpha=0.95))
+
+        ax_sec.annotate(
+            f"σ=inf\n{pt_min[2]:.3f} MPa",
+            xy=(pt_min[0], pt_min[1]),
+            xytext=(pt_min[0], pt_min[1] - 0.25),
+            fontsize=8, color='darkblue', fontweight='bold',
+            ha='center',
+            arrowprops=dict(arrowstyle='->', color='darkblue', lw=2),
+            bbox=dict(boxstyle='round', facecolor='white',
+                      edgecolor='darkblue', alpha=0.95))
+
+    else:
+        # CON giro: rojo = esquina sup-der, azul = esquina inf-izq
+        score_sup_der = y_v + z_v
+        score_inf_izq = -(y_v + z_v)
+
+        idx_sup_der = np.argmax(score_sup_der)
+        idx_inf_izq = np.argmax(score_inf_izq)
+
+        pt_max = (z_v[idx_sup_der], y_v[idx_sup_der], sigma_v[idx_sup_der])
+        pt_min = (z_v[idx_inf_izq], y_v[idx_inf_izq], sigma_v[idx_inf_izq])
+
+        z_c = np.mean(z_v)
+        y_c = np.mean(y_v)
+
+        def offset_esquina(z_pt, y_pt, escala=0.35):
+            dz = z_pt - z_c
+            dy = y_pt - y_c
+            norm_ = np.sqrt(dz**2 + dy**2)
+            if norm_ < 1e-8:
+                return 0.3, 0.0
+            return (dz/norm_)*escala, (dy/norm_)*escala
+
+        dz_max, dy_max = offset_esquina(pt_max[0], pt_max[1])
+        dz_min, dy_min = offset_esquina(pt_min[0], pt_min[1])
+
+        ax_sec.annotate(
+            f"σ_sup-der\n{pt_max[2]:.3f} MPa",
+            xy=(pt_max[0], pt_max[1]),
+            xytext=(pt_max[0] + dz_max, pt_max[1] + dy_max),
+            fontsize=8, color='darkred', fontweight='bold',
+            ha='center',
+            arrowprops=dict(arrowstyle='->', color='darkred', lw=2),
+            bbox=dict(boxstyle='round', facecolor='white',
+                      edgecolor='darkred', alpha=0.95))
+
+        ax_sec.annotate(
+            f"σ_inf-izq\n{pt_min[2]:.3f} MPa",
+            xy=(pt_min[0], pt_min[1]),
+            xytext=(pt_min[0] + dz_min, pt_min[1] + dy_min),
+            fontsize=8, color='darkblue', fontweight='bold',
+            ha='center',
+            arrowprops=dict(arrowstyle='->', color='darkblue', lw=2),
+            bbox=dict(boxstyle='round', facecolor='white',
+                      edgecolor='darkblue', alpha=0.95))
+
+    ax_sec.plot(pt_max[0], pt_max[1], 'r*', ms=14, zorder=6)
+    ax_sec.plot(pt_min[0], pt_min[1], 'b*', ms=14, zorder=6)
+
+    sigma_max_val = pt_max[2]
+    sigma_min_val = pt_min[2]
+
+    ax_sec.set_aspect('equal')
+    ax_sec.set_xlabel('z (m)', fontsize=9)
+    ax_sec.set_ylabel('y (m)', fontsize=9)
+    titulo_nodo = f'N{nodo_idx+1}' if nodo_idx >= 0 else f'x={x_pos:.4f} m'
+    ax_sec.set_title(
+        f'{titulo_nodo}\nθx={Grados}°',
+        fontsize=10, fontweight='bold')
+    ax_sec.grid(True, alpha=0.2)
+
+    # ── Tabla ─────────────────────────────────────────────────────────
+    ax_info.axis('off')
+    tabla = [
+        ['Parámetro',    'Valor'],
+        ['x (m)',        f'{x_pos:.3f}'],
+        ['Mz (kN·m)',    f'{Mz_kNm:.2f}'],
+        ['My (kN·m)',    f'{My_kNm:.4f}'],
+        ['N_axial (kN)', f'{N_kN:.1f}'],
+        ['θx (°)',       f'{np.rad2deg(theta_x):.5f}'],
+        ['σ_max (MPa)',  f'{sigma_max_val:.4f}'],
+        ['σ_min (MPa)',  f'{sigma_min_val:.4f}'],
+        ['Estado max',   'TENSIÓN' if sigma_max_val > 0 else 'COMP.'],
+        ['Estado min',   'TENSIÓN' if sigma_min_val > 0 else 'COMP.'],
+    ]
+    t = ax_info.table(cellText=tabla[1:], colLabels=tabla[0],
+                      loc='center', cellLoc='center')
+    t.auto_set_font_size(False)
+    t.set_fontsize(9)
+    t.scale(1.1, 1.6)
+    for j in range(2):
+        t[(0,j)].set_facecolor('#2c3e50')
+        t[(0,j)].set_text_props(color='white', fontweight='bold')
+    for row_i in range(1, len(tabla)):
+        try:
+            v = float(tabla[row_i][1])
+            if 'σ' in tabla[row_i][0]:
+                t[(row_i,1)].set_facecolor(
+                    '#ffcccc' if v > 0 else '#cce5ff')
+        except ValueError:
+            pass
+
+# ============================================================================
+# DIAGRAMAS LATERALES: Vz, My y Deflexión Lateral
+# ============================================================================
+
+# ============================================================================
+# θx = dv/dx POR HERMITE → q_lat TOTAL → DIAGRAMA My LATERAL
+# ============================================================================
+
+# ── 1. θx(x) continuo por Hermite ────────────────────────────────────
+x_theta      = []
+theta_x_cont = []
+
+for i in range(num_nodos - 1):
+    Ls_ = nodos[i+1] - nodos[i]
+    if Ls_ <= 0:
+        continue
+    vi_  = u_global[i*7 + 1];     tzi_ = u_global[i*7 + 5]
+    vj_  = u_global[(i+1)*7 + 1]; tzj_ = u_global[(i+1)*7 + 5]
+
+    for xl in np.linspace(0, Ls_, 60):
+        xi_ = xl / Ls_
+        dN1_dx = (-6*xi_ + 6*xi_**2) / Ls_
+        dN2_dx =   1 - 4*xi_ + 3*xi_**2
+        dN3_dx = ( 6*xi_ - 6*xi_**2) / Ls_
+        dN4_dx =  -2*xi_ + 3*xi_**2
+        theta_pt = dN1_dx*vi_ + dN2_dx*tzi_ + dN3_dx*vj_ + dN4_dx*tzj_
+        x_theta.append(nodos[i] + xl)
+        theta_x_cont.append(theta_pt)
+
+x_theta      = np.array(x_theta)
+theta_x_cont = np.array(theta_x_cont)
+
+# ── 2. Carga lateral TOTAL: alpha (inclinación) + θx (giro deformada) 
+# q·sin(alpha) = componente horizontal del peso propio por inclinación
+# q·sin(θx)   = componente lateral por giro de la sección en la deformada
+# Ambas actúan en la misma dirección lateral
+q_alpha_cont = q * np.sin(alpha)                          # constante
+q_theta_cont = q * np.sin(theta_x_cont)                   # variable
+q_lat_cont   = q_alpha_cont + q_theta_cont                 # total
+
+print(f"\n  q por inclinación (alpha={Grados}°): {q_alpha_cont:.6f} kN/m")
+print(f"  q_lat por θx máximo:                {np.max(np.abs(q_theta_cont)):.6f} kN/m")
+print(f"  q_lat total máximo:                 {np.max(np.abs(q_lat_cont)):.6f} kN/m")
+
+# ── 3. Reacciones laterales en N3 y N7 por equilibrio ────────────────
+x_N3 = nodos[2];  x_N7 = nodos[6]
+L_vano_lat = x_N7 - x_N3
+
+Q_lat_total = np.trapz(q_lat_cont, x_theta)
+
+def momento_respecto_a(x_arr, q_arr, x_ref):
+    return np.trapz(q_arr * (x_arr - x_ref), x_arr)
+
+M_lat_N3 = momento_respecto_a(x_theta, q_lat_cont, x_N3)
+
+R_w7_lat = M_lat_N3 / L_vano_lat
+R_w3_lat = Q_lat_total - R_w7_lat
+
+print(f"\nREACCIONES LATERALES:")
+print(f"  R_w3 = {R_w3_lat:.6f} kN")
+print(f"  R_w7 = {R_w7_lat:.6f} kN")
+print(f"  Suma = {R_w3_lat+R_w7_lat:.6f} kN  |  Q_lat_total = {Q_lat_total:.6f} kN")
+
+# ── 4. Equilibrio acumulado lateral → Vz(x) y My(x) ─────────────────
+# Convención: q_lat actúa como carga distribuida lateral (↓ en z)
+# Vz se acumula igual que Vy en el vertical
+# My = integral de Vz (igual que Mz = integral de Vy)
+
+x_saltos_lat = {x_N3: R_w3_lat, x_N7: R_w7_lat}
+x_eval_lat   = np.sort(np.unique(np.concatenate([
+    x_theta, np.array([x_N3, x_N7])])))
+
+x_lat   = [x_eval_lat[0]]
+Vz_lat  = [0.0]
+My_lat  = [0.0]
+
+Vz_acum = 0.0
+My_acum = 0.0
+x_prev  = x_eval_lat[0]
+
+for x_cur in x_eval_lat[1:]:
+    mask_seg = (x_theta >= x_prev) & (x_theta <= x_cur)
+    if mask_seg.sum() > 1:
+        xs = x_theta[mask_seg]
+        qs = q_lat_cont[mask_seg]
+        dQ = np.trapz(qs, xs)           # carga total en el segmento
+        dM = np.trapz(qs * (x_cur - xs), xs)  # momento en x_cur
+    else:
+        dQ = 0.0; dM = 0.0
+
+    # My acumula: Vz·dx - integral de q_lat·(x_cur - x)·dx
+    My_acum += Vz_acum * (x_cur - x_prev) - dM
+    Vz_acum -= dQ   # q_lat reduce Vz (igual que peso propio reduce Vy)
+
+    Fc_lat = x_saltos_lat.get(x_cur, 0.0)
+    if abs(Fc_lat) > 1e-10:
+        x_lat.append(x_cur);  Vz_lat.append(Vz_acum)
+        My_lat.append(My_acum)
+        Vz_acum += Fc_lat     # reacción sube Vz
+
+    x_lat.append(x_cur);  Vz_lat.append(Vz_acum)
+    My_lat.append(My_acum)
+    x_prev = x_cur
+
+x_lat  = np.array(x_lat)
+Vz_lat = np.array(Vz_lat)
+My_lat = np.array(My_lat)
+
+My_nodos = np.interp(nodos, x_lat, My_lat)
+
+print(f"\n  My_max = {np.max(np.abs(My_lat)):.6f} kN·m")
+print(f"\n  My en nodos:")
+for i in range(num_nodos):
+    print(f"    N{i+1} @ x={nodos[i]:.2f}m : My = {My_nodos[i]:.6f} kN·m")
+
+# ── 5. Deflexión lateral continua por Hermite (w y θy) ───────────────
+x_defl_lat = []
+w_defl     = []
+
+for i in range(num_nodos - 1):
+    Ls_ = nodos[i+1] - nodos[i]
+    if Ls_ <= 0:
+        continue
+    wi_  = u_global[i*7 + 2];      tyi_ = -u_global[i*7 + 4]   # signo θy
+    wj_  = u_global[(i+1)*7 + 2];  tyj_ = -u_global[(i+1)*7 + 4]
+
+    for xl in np.linspace(0, Ls_, 60):
+        xi_ = xl / Ls_
+        N1 = 1 - 3*xi_**2 + 2*xi_**3
+        N2 = Ls_*(xi_ - 2*xi_**2 + xi_**3)
+        N3 = 3*xi_**2 - 2*xi_**3
+        N4 = Ls_*(-xi_**2 + xi_**3)
+        w_pt = N1*wi_ + N2*tyi_ + N3*wj_ + N4*tyj_
+        x_defl_lat.append(nodos[i] + xl)
+        w_defl.append(w_pt * 1000)  # mm
+
+x_defl_lat = np.array(x_defl_lat)
+w_defl     = np.array(w_defl)
+w_nodos_mm = [u_global[i*7 + 2] * 1000 for i in range(num_nodos)]
+
+# ── 6. Tabla resumen ──────────────────────────────────────────────────
+print("\n" + "="*65)
+print("DIAGRAMAS LATERALES — RESUMEN")
+print("="*65)
+print(f"{'Nodo':<6} {'x(m)':>6} | {'Vz(kN)':>10} {'My(kN·m)':>12} {'w(mm)':>10}")
+print("-"*50)
+for i in range(num_nodos):
+    Vz_n = float(np.interp(nodos[i], x_lat, Vz_lat))
+    print(f"N{i+1:<4} {nodos[i]:>6.2f} | {Vz_n:>10.4f} {My_nodos[i]:>12.4f} {w_nodos_mm[i]:>10.4f}")
+
+# ── 7. Figura: 3 diagramas laterales ─────────────────────────────────
+fig_lat, axes_lat = plt.subplots(3, 1, figsize=(16, 14))
+
+def marcar_apoyos_lat(ax):
+    for xa in [nodos[2], nodos[6]]:
+        ax.axvline(xa, color='orange', ls=':', lw=2, alpha=0.8)
+
+# — Cortante lateral Vz —
+axes_lat[0].plot(x_lat, Vz_lat, '-', color='teal', lw=2.5, label='Cortante lateral Vz')
+axes_lat[0].fill_between(x_lat, Vz_lat, 0, alpha=0.25, color='teal')
+axes_lat[0].axhline(0, color='k', lw=0.8, ls='--', alpha=0.5)
+marcar_apoyos_lat(axes_lat[0])
+
+Vz_rng = max(np.max(np.abs(Vz_lat)), 1e-3)
+for xa, R, nom, col in [(x_N3, R_w3_lat, 'N3', 'blue'),
+                         (x_N7, R_w7_lat, 'N7', 'green')]:
+    axes_lat[0].annotate(
+        f'R_w{nom[-1]}={R:.4f} kN',
+        xy=(xa, 0),
+        xytext=(xa, Vz_rng * (0.5 if nom == 'N3' else -0.5)),
+        ha='center', fontsize=10, color=col, fontweight='bold',
+        arrowprops=dict(arrowstyle='->', lw=2, color=col),
+        bbox=dict(boxstyle='round', facecolor='white', edgecolor=col))
+
+Vz_nodos = [float(np.interp(nodos[i], x_lat, Vz_lat)) for i in range(num_nodos)]
+axes_lat[0].scatter(nodos, Vz_nodos, s=60, color='teal', zorder=5)
+axes_lat[0].set_ylabel('Vz lateral (kN)', fontweight='bold', fontsize=12)
+axes_lat[0].set_title('Cortante Lateral Vz', fontweight='bold', fontsize=13)
+axes_lat[0].grid(True, alpha=0.3)
+axes_lat[0].legend(fontsize=10)
+axes_lat[0].set_xlim([-0.5, LTOTAL+0.5])
+
+# — Momento lateral My —
+axes_lat[1].plot(x_lat, My_lat, '-', color='darkcyan', lw=2.5, label='Momento lateral My')
+axes_lat[1].fill_between(x_lat, My_lat, 0, alpha=0.25, color='darkcyan')
+axes_lat[1].axhline(0, color='k', lw=0.8, ls='--', alpha=0.5)
+marcar_apoyos_lat(axes_lat[1])
+
+idx_My_plot = np.argmax(np.abs(My_lat))
+axes_lat[1].annotate(
+    f'My_max={My_lat[idx_My_plot]:.4f} kN·m',
+    xy=(x_lat[idx_My_plot], My_lat[idx_My_plot]),
+    xytext=(x_lat[idx_My_plot] + 2, My_lat[idx_My_plot] * 0.7),
+    fontsize=10, color='darkred', fontweight='bold',
+    arrowprops=dict(arrowstyle='->', lw=1.5, color='darkred'),
+    bbox=dict(boxstyle='round', facecolor='white', edgecolor='darkred'))
+
+axes_lat[1].scatter(nodos, My_nodos, s=60, color='darkcyan', zorder=5)
+axes_lat[1].set_ylabel('My (kN·m)', fontweight='bold', fontsize=12)
+axes_lat[1].set_title('Momento Lateral My', fontweight='bold', fontsize=13)
+axes_lat[1].grid(True, alpha=0.3)
+axes_lat[1].legend(fontsize=10)
+axes_lat[1].set_xlim([-0.5, LTOTAL+0.5])
+
+# — Deflexión lateral w —
+axes_lat[2].plot(x_defl_lat, w_defl, '-', color='sienna', lw=2.5, label='Deflexión lateral w')
+axes_lat[2].plot(nodos, w_nodos_mm, 'o', color='sienna', ms=8,
+                 mec='white', mew=1.5, zorder=5, label='Nodos MEF')
+axes_lat[2].fill_between(x_defl_lat, w_defl, 0, alpha=0.2, color='sienna')
+axes_lat[2].axhline(0, color='k', lw=0.8, ls='--', alpha=0.5)
+marcar_apoyos_lat(axes_lat[2])
+
+idx_w_max = np.argmax(np.abs(w_defl))
+axes_lat[2].annotate(
+    f'w_max={w_defl[idx_w_max]:.4f} mm',
+    xy=(x_defl_lat[idx_w_max], w_defl[idx_w_max]),
+    xytext=(x_defl_lat[idx_w_max] + 2, w_defl[idx_w_max] * 0.7),
+    fontsize=10, color='sienna', fontweight='bold',
+    arrowprops=dict(arrowstyle='->', lw=1.5, color='sienna'),
+    bbox=dict(boxstyle='round', facecolor='white', edgecolor='sienna'))
+
+axes_lat[2].set_ylabel('Deflexión w (mm)', fontweight='bold', fontsize=12)
+axes_lat[2].set_xlabel('Posición (m)', fontweight='bold', fontsize=12)
+axes_lat[2].set_title('Deflexión Lateral w (Hermite)', fontweight='bold', fontsize=13)
+axes_lat[2].grid(True, alpha=0.3)
+axes_lat[2].legend(fontsize=10)
+axes_lat[2].set_xlim([-0.5, LTOTAL+0.5])
+
+plt.suptitle(
+    f'Diagramas Laterales — Viga PCI Tipo VI\n'
+    f'L={LTOTAL}m | a={a_L*LTOTAL:.1f}m | Grados={Grados}° | '
+    f'q_lat_max={np.max(np.abs(q_lat_cont)):.4f} kN/m',
+    fontsize=13, fontweight='bold')
+plt.tight_layout()
+plt.show()
+
+print("\n✅ Diagramas laterales completados")
+
+# ============================================================================
+# SECCIONES CRÍTICAS: MAYOR Mz Y MAYOR My
+# ============================================================================
+
+idx_Mz_max  = np.argmax(np.abs(Mz_eq))
+x_Mz_max    = x_eq[idx_Mz_max]
+Mz_max_crit = Mz_eq[idx_Mz_max]
+My_en_Mz    = float(np.interp(x_Mz_max, x_lat, My_lat))
+theta_en_Mz = float(np.interp(x_Mz_max, x_theta, theta_x_cont))
+
+idx_My_max  = np.argmax(np.abs(My_lat))
+x_My_max    = x_lat[idx_My_max]
+My_max_crit = My_lat[idx_My_max]
+Mz_en_My    = float(np.interp(x_My_max, x_eq, Mz_eq))
+theta_en_My = float(np.interp(x_My_max, x_theta, theta_x_cont))
+
+print("\n" + "="*70)
+print("SECCIONES CRÍTICAS")
+print("="*70)
+print(f"\n  Máximo |Mz|:")
+print(f"    x        = {x_Mz_max:.4f} m")
+print(f"    Mz       = {Mz_max_crit:.4f} kN·m")
+print(f"    My       = {My_en_Mz:.6f} kN·m")
+print(f"    θx       = {np.rad2deg(theta_en_Mz):.5f}°")
+print(f"\n  Máximo |My|:")
+print(f"    x        = {x_My_max:.4f} m")
+print(f"    My       = {My_max_crit:.6f} kN·m")
+print(f"    Mz       = {Mz_en_My:.4f} kN·m")
+print(f"    θx       = {np.rad2deg(theta_en_My):.5f}°")
+
+fig_crit, axes_crit = plt.subplots(2, 2, figsize=(16, 18),
+                                    gridspec_kw={'width_ratios': [2, 1]})
+fig_crit.suptitle(
+    'Secciones Críticas — Mayor Mz y Mayor My\n'
+    f'Viga PCI Tipo VI | L={LTOTAL}m | '
+    f'P_ps={P_pretensado:.0f}kN | e={e_pretensado}m',
+    fontsize=14, fontweight='bold')
+
+graficar_seccion(
+    axes_crit[0, 0], axes_crit[0, 1],
+    nodo_idx=-1, x_pos=x_Mz_max,
+    Mz_val=Mz_max_crit, My_val=My_en_Mz, theta_x=theta_en_Mz)
+axes_crit[0, 0].set_title(
+    f'Sección de Máximo |Mz|\n'
+    f'x={x_Mz_max:.3f} m  |  Mz={Mz_max_crit:.2f} kN·m  |  '
+    f'θx={np.rad2deg(theta_en_Mz):.4f}°',
+    fontsize=11, fontweight='bold', color='darkorange')
+
+graficar_seccion(
+    axes_crit[1, 0], axes_crit[1, 1],
+    nodo_idx=-1, x_pos=x_My_max,
+    Mz_val=Mz_en_My, My_val=My_max_crit, theta_x=theta_en_My)
+axes_crit[1, 0].set_title(
+    f'Sección de Máximo |My|\n'
+    f'x={x_My_max:.3f} m  |  My={My_max_crit:.6f} kN·m  |  '
+    f'θx={np.rad2deg(theta_en_My):.4f}°',
+    fontsize=11, fontweight='bold', color='teal')
+
+plt.tight_layout()
+plt.show()
+print("✓ Figura secciones críticas generada")
+
+
+# ============================================================================
+# FIGURA 1: TODOS LOS 9 NODOS
+# ============================================================================
+idx_Mmax_nodo = int(np.argmax(np.abs([esfuerzos_eq[i,5] for i in range(num_nodos)])))
+nodos_criticos = sorted(set([2, 4, 6, idx_Mmax_nodo]))
+
+print("\nGenerando figura: TODOS LOS NODOS...")
+fig1, axes1 = plt.subplots(3, 6, figsize=(28, 18),
+                            gridspec_kw={'width_ratios': [2,1]*3})
+fig1.suptitle(
+    'Esfuerzos en Sección Transversal — Todos los Nodos\n'
+    f'Viga PCI Tipo VI | L={LTOTAL}m | P_ps={P_pretensado:.0f}kN | e={e_pretensado}m',
+    fontsize=14, fontweight='bold')
+
+for col, i_nodo in enumerate(range(num_nodos)):
+    row  = col // 3
+    col2 = (col % 3) * 2
+    ax_s = axes1[row, col2]
+    ax_t = axes1[row, col2+1]
+    theta_x_nodo = float(np.interp(nodos[i_nodo], x_theta, theta_x_cont))
+    Mz_nodo      = esfuerzos_eq[i_nodo, 5]
+    My_nodo      = float(np.interp(nodos[i_nodo], x_lat, My_lat))
+    graficar_seccion(ax_s, ax_t, i_nodo, nodos[i_nodo], Mz_nodo, My_nodo, theta_x_nodo)
+
+plt.tight_layout()
+plt.show()
+print("✓ Figura todos los nodos generada")
+
+
+# ============================================================================
+# FIGURA 2: NODOS CRÍTICOS
+# ============================================================================
+print("\nGenerando figura: NODOS CRÍTICOS...")
+n_crit = len(nodos_criticos)
+fig2, axes2 = plt.subplots(n_crit, 2, figsize=(14, 7*n_crit),
+                            gridspec_kw={'width_ratios': [2, 1]})
+if n_crit == 1:
+    axes2 = [axes2]
+
+fig2.suptitle(
+    'Esfuerzos en Sección Transversal — Nodos Críticos\n'
+    f'Viga PCI Tipo VI | L={LTOTAL}m | P_ps={P_pretensado:.0f}kN | e={e_pretensado}m',
+    fontsize=14, fontweight='bold')
+
+for fila, i_nodo in enumerate(nodos_criticos):
+    theta_x_nodo = float(np.interp(nodos[i_nodo], x_theta, theta_x_cont))
+    Mz_nodo      = esfuerzos_eq[i_nodo, 5]
+    My_nodo      = float(np.interp(nodos[i_nodo], x_lat, My_lat))
+    graficar_seccion(axes2[fila][0], axes2[fila][1],
+                     i_nodo, nodos[i_nodo], Mz_nodo, My_nodo, theta_x_nodo)
+
+plt.tight_layout()
+plt.show()
+print("✓ Figura nodos críticos generada")
+print("\n✅ Secciones transversales completadas")
+
