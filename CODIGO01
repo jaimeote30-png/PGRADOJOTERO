@@ -24,7 +24,7 @@ fc=49 # MPa
 # -------------------------------
 # Ángulo de inclinación de la viga
 # -------------------------------
-Grados = 0               # Ángulo en grados (entrada del modelo)
+Grados = 10               # Ángulo en grados (entrada del modelo)
 alpha = np.deg2rad(Grados) # Conversión a radianes
 
 ##-----------------------------------------##
@@ -1762,3 +1762,576 @@ plt.tight_layout()
 plt.show()
 
 print("\n✅ Esfuerzos en secciones completados")
+
+
+# ============================================================================
+# DIBUJO DE SECCIONES TRANSVERSALES CON ESFUERZOS Y GIRO θx
+# ============================================================================
+from matplotlib.path import Path
+from matplotlib.patches import PathPatch
+from matplotlib.colors import Normalize
+from matplotlib.cm import ScalarMappable
+import matplotlib.cm as cm
+
+def get_vertices_PCI_VI():
+    D1=1.829; D2=0.127; D3=0.076; D5=0.254; D6=0.203
+    B1=1.067; B2=0.711; B3=0.203; B4=0.102
+    yc = 0.9140
+    y_top = D1 - yc
+    x2 = B1/2
+    v = []
+    v.append([-B1/2,  y_top])
+    v.append([ B1/2,  y_top])
+    v.append([ B1/2,  y_top - D2])
+    v.append([ x2-(B1-B2)/2+B3/2, y_top-D2-D3])
+    v.append([ B3/2,  y_top-D2-D3])
+    v.append([ B3/2, -yc+D6+D5])
+    v.append([ B3/2+B4, -yc+D6+D5])
+    v.append([ B2/2, -yc+D6])
+    v.append([ B2/2, -yc])
+    v.append([-B2/2, -yc])
+    v.append([-B2/2, -yc+D6])
+    v.append([-(B3/2+B4), -yc+D6+D5])
+    v.append([-B3/2, -yc+D6+D5])
+    v.append([-B3/2,  y_top-D2-D3])
+    v.append([-(x2-(B1-B2)/2+B3/2), y_top-D2-D3])
+    v.append([-B1/2,  y_top-D2])
+    return np.array(v)
+
+def rotar_vertices(verts, theta):
+    c, s = np.cos(theta), np.sin(theta)
+    R = np.array([[c, -s],[s,  c]])
+    return verts @ R.T
+
+def calcular_sigma_seccion(verts_rot, N_kN, Mz_kNm, My_kNm, n=150):
+    y_min, y_max = verts_rot[:,1].min(), verts_rot[:,1].max()
+    z_min, z_max = verts_rot[:,0].min(), verts_rot[:,0].max()
+    zg, yg = np.meshgrid(np.linspace(z_min, z_max, n),
+                          np.linspace(y_min, y_max, n))
+    path  = Path(verts_rot)
+    pts   = np.column_stack([zg.ravel(), yg.ravel()])
+    mask  = path.contains_points(pts).reshape(zg.shape)
+    sigma = (N_kN / PA) - (Mz_kNm * yg / PIF) + (My_kNm * zg / PID)  # kPa
+    sigma_MPa = np.ma.masked_where(~mask, sigma / 1000)
+    return zg, yg, sigma_MPa, mask
+
+def graficar_seccion(ax_sec, ax_info, nodo_idx, x_pos, Mz_val, My_val, theta_x):
+
+    N_kN   = -P_pretensado if CONSIDERAR_PRETENSADO else 0.0
+    Mz_kNm = Mz_val
+    My_kNm = My_val
+
+    verts_orig = get_vertices_PCI_VI()
+
+    # Si Grados=0 no rotar la sección visualmente
+    theta_visual = theta_x if Grados != 0 else 0.0
+    verts_rot  = rotar_vertices(verts_orig, theta_visual)
+
+    zg, yg, sigma, mask = calcular_sigma_seccion(verts_rot, N_kN, Mz_kNm, My_kNm)
+
+    vmax = max(abs(float(sigma.min())), abs(float(sigma.max())))
+    if vmax < 1e-6: vmax = 1.0
+    norm = Normalize(vmin=-vmax, vmax=vmax)
+    cmap = cm.RdBu_r
+
+    cf = ax_sec.contourf(zg, yg, sigma, levels=40,
+                          cmap=cmap, norm=norm, extend='both')
+    try:
+        ax_sec.contour(zg, yg, sigma, levels=[0],
+                       colors='black', linewidths=2, linestyles='--')
+    except Exception:
+        pass
+
+    patch_verts = np.vstack([verts_rot, verts_rot[0]])
+    ax_sec.plot(patch_verts[:,0], patch_verts[:,1], 'k-', linewidth=2)
+    plt.colorbar(cf, ax=ax_sec, label='σ (MPa)', fraction=0.03, pad=0.04)
+
+    y_v = verts_rot[:, 1]
+    z_v = verts_rot[:, 0]
+    sigma_v = (N_kN/PA - Mz_kNm*y_v/PIF + My_kNm*z_v/PID) / 1000
+
+    if Grados == 0:
+        # flechas al centro del ala superior e inferior, sin rotación
+        y_sup_val = y_v.max()
+        y_inf_val = y_v.min()
+
+        mask_sup = np.abs(y_v - y_sup_val) < 1e-3
+        z_sup_c  = np.mean(z_v[mask_sup]) if mask_sup.any() else 0.0
+
+        mask_inf = np.abs(y_v - y_inf_val) < 1e-3
+        z_inf_c  = np.mean(z_v[mask_inf]) if mask_inf.any() else 0.0
+
+        s_sup = (N_kN/PA - Mz_kNm*y_sup_val/PIF + My_kNm*z_sup_c/PID) / 1000
+        s_inf = (N_kN/PA - Mz_kNm*y_inf_val/PIF + My_kNm*z_inf_c/PID) / 1000
+
+        pt_max = (z_sup_c, y_sup_val, s_sup)
+        pt_min = (z_inf_c, y_inf_val, s_inf)
+
+        ax_sec.annotate(
+            f"σ=sup\n{pt_max[2]:.3f} MPa",
+            xy=(pt_max[0], pt_max[1]),
+            xytext=(pt_max[0], pt_max[1] + 0.25),
+            fontsize=8, color='darkred', fontweight='bold',
+            ha='center',
+            arrowprops=dict(arrowstyle='->', color='darkred', lw=2),
+            bbox=dict(boxstyle='round', facecolor='white',
+                      edgecolor='darkred', alpha=0.95))
+
+        ax_sec.annotate(
+            f"σ=inf\n{pt_min[2]:.3f} MPa",
+            xy=(pt_min[0], pt_min[1]),
+            xytext=(pt_min[0], pt_min[1] - 0.25),
+            fontsize=8, color='darkblue', fontweight='bold',
+            ha='center',
+            arrowprops=dict(arrowstyle='->', color='darkblue', lw=2),
+            bbox=dict(boxstyle='round', facecolor='white',
+                      edgecolor='darkblue', alpha=0.95))
+
+    else:
+        # CON giro: rojo = esquina sup-der, azul = esquina inf-izq
+        score_sup_der = y_v + z_v
+        score_inf_izq = -(y_v + z_v)
+
+        idx_sup_der = np.argmax(score_sup_der)
+        idx_inf_izq = np.argmax(score_inf_izq)
+
+        pt_max = (z_v[idx_sup_der], y_v[idx_sup_der], sigma_v[idx_sup_der])
+        pt_min = (z_v[idx_inf_izq], y_v[idx_inf_izq], sigma_v[idx_inf_izq])
+
+        z_c = np.mean(z_v)
+        y_c = np.mean(y_v)
+
+        def offset_esquina(z_pt, y_pt, escala=0.35):
+            dz = z_pt - z_c
+            dy = y_pt - y_c
+            norm_ = np.sqrt(dz**2 + dy**2)
+            if norm_ < 1e-8:
+                return 0.3, 0.0
+            return (dz/norm_)*escala, (dy/norm_)*escala
+
+        dz_max, dy_max = offset_esquina(pt_max[0], pt_max[1])
+        dz_min, dy_min = offset_esquina(pt_min[0], pt_min[1])
+
+        ax_sec.annotate(
+            f"σ_sup-der\n{pt_max[2]:.3f} MPa",
+            xy=(pt_max[0], pt_max[1]),
+            xytext=(pt_max[0] + dz_max, pt_max[1] + dy_max),
+            fontsize=8, color='darkred', fontweight='bold',
+            ha='center',
+            arrowprops=dict(arrowstyle='->', color='darkred', lw=2),
+            bbox=dict(boxstyle='round', facecolor='white',
+                      edgecolor='darkred', alpha=0.95))
+
+        ax_sec.annotate(
+            f"σ_inf-izq\n{pt_min[2]:.3f} MPa",
+            xy=(pt_min[0], pt_min[1]),
+            xytext=(pt_min[0] + dz_min, pt_min[1] + dy_min),
+            fontsize=8, color='darkblue', fontweight='bold',
+            ha='center',
+            arrowprops=dict(arrowstyle='->', color='darkblue', lw=2),
+            bbox=dict(boxstyle='round', facecolor='white',
+                      edgecolor='darkblue', alpha=0.95))
+
+    ax_sec.plot(pt_max[0], pt_max[1], 'r*', ms=14, zorder=6)
+    ax_sec.plot(pt_min[0], pt_min[1], 'b*', ms=14, zorder=6)
+
+    sigma_max_val = pt_max[2]
+    sigma_min_val = pt_min[2]
+
+    ax_sec.set_aspect('equal')
+    ax_sec.set_xlabel('z (m)', fontsize=9)
+    ax_sec.set_ylabel('y (m)', fontsize=9)
+    titulo_nodo = f'N{nodo_idx+1}' if nodo_idx >= 0 else f'x={x_pos:.4f} m'
+    ax_sec.set_title(
+        f'{titulo_nodo}\nθx={Grados}°',
+        fontsize=10, fontweight='bold')
+    ax_sec.grid(True, alpha=0.2)
+
+    # ── Tabla ─────────────────────────────────────────────────────────
+    ax_info.axis('off')
+    tabla = [
+        ['Parámetro',    'Valor'],
+        ['x (m)',        f'{x_pos:.3f}'],
+        ['Mz (kN·m)',    f'{Mz_kNm:.2f}'],
+        ['My (kN·m)',    f'{My_kNm:.4f}'],
+        ['N_axial (kN)', f'{N_kN:.1f}'],
+        ['θx (°)',       f'{np.rad2deg(theta_x):.5f}'],
+        ['σ_max (MPa)',  f'{sigma_max_val:.4f}'],
+        ['σ_min (MPa)',  f'{sigma_min_val:.4f}'],
+        ['Estado max',   'TENSIÓN' if sigma_max_val > 0 else 'COMP.'],
+        ['Estado min',   'TENSIÓN' if sigma_min_val > 0 else 'COMP.'],
+    ]
+    t = ax_info.table(cellText=tabla[1:], colLabels=tabla[0],
+                      loc='center', cellLoc='center')
+    t.auto_set_font_size(False)
+    t.set_fontsize(9)
+    t.scale(1.1, 1.6)
+    for j in range(2):
+        t[(0,j)].set_facecolor('#2c3e50')
+        t[(0,j)].set_text_props(color='white', fontweight='bold')
+    for row_i in range(1, len(tabla)):
+        try:
+            v = float(tabla[row_i][1])
+            if 'σ' in tabla[row_i][0]:
+                t[(row_i,1)].set_facecolor(
+                    '#ffcccc' if v > 0 else '#cce5ff')
+        except ValueError:
+            pass
+
+# ============================================================================
+# DIAGRAMAS LATERALES: Vz, My y Deflexión Lateral
+# ============================================================================
+
+# ============================================================================
+# θx = dv/dx POR HERMITE → q_lat TOTAL → DIAGRAMA My LATERAL
+# ============================================================================
+
+# ── 1. θx(x) continuo por Hermite ────────────────────────────────────
+x_theta      = []
+theta_x_cont = []
+
+for i in range(num_nodos - 1):
+    Ls_ = nodos[i+1] - nodos[i]
+    if Ls_ <= 0:
+        continue
+    vi_  = u_global[i*7 + 1];     tzi_ = u_global[i*7 + 5]
+    vj_  = u_global[(i+1)*7 + 1]; tzj_ = u_global[(i+1)*7 + 5]
+
+    for xl in np.linspace(0, Ls_, 60):
+        xi_ = xl / Ls_
+        dN1_dx = (-6*xi_ + 6*xi_**2) / Ls_
+        dN2_dx =   1 - 4*xi_ + 3*xi_**2
+        dN3_dx = ( 6*xi_ - 6*xi_**2) / Ls_
+        dN4_dx =  -2*xi_ + 3*xi_**2
+        theta_pt = dN1_dx*vi_ + dN2_dx*tzi_ + dN3_dx*vj_ + dN4_dx*tzj_
+        x_theta.append(nodos[i] + xl)
+        theta_x_cont.append(theta_pt)
+
+x_theta      = np.array(x_theta)
+theta_x_cont = np.array(theta_x_cont)
+
+# ── 2. Carga lateral TOTAL: alpha (inclinación) + θx (giro deformada) 
+# q·sin(alpha) = componente horizontal del peso propio por inclinación
+# q·sin(θx)   = componente lateral por giro de la sección en la deformada
+# Ambas actúan en la misma dirección lateral
+q_alpha_cont = q * np.sin(alpha)                          # constante
+q_theta_cont = q * np.sin(theta_x_cont)                   # variable
+q_lat_cont   = q_alpha_cont + q_theta_cont                 # total
+
+print(f"\n  q por inclinación (alpha={Grados}°): {q_alpha_cont:.6f} kN/m")
+print(f"  q_lat por θx máximo:                {np.max(np.abs(q_theta_cont)):.6f} kN/m")
+print(f"  q_lat total máximo:                 {np.max(np.abs(q_lat_cont)):.6f} kN/m")
+
+# ── 3. Reacciones laterales en N3 y N7 por equilibrio ────────────────
+x_N3 = nodos[2];  x_N7 = nodos[6]
+L_vano_lat = x_N7 - x_N3
+
+Q_lat_total = np.trapz(q_lat_cont, x_theta)
+
+def momento_respecto_a(x_arr, q_arr, x_ref):
+    return np.trapz(q_arr * (x_arr - x_ref), x_arr)
+
+M_lat_N3 = momento_respecto_a(x_theta, q_lat_cont, x_N3)
+
+R_w7_lat = M_lat_N3 / L_vano_lat
+R_w3_lat = Q_lat_total - R_w7_lat
+
+print(f"\nREACCIONES LATERALES:")
+print(f"  R_w3 = {R_w3_lat:.6f} kN")
+print(f"  R_w7 = {R_w7_lat:.6f} kN")
+print(f"  Suma = {R_w3_lat+R_w7_lat:.6f} kN  |  Q_lat_total = {Q_lat_total:.6f} kN")
+
+# ── 4. Equilibrio acumulado lateral → Vz(x) y My(x) ─────────────────
+# Convención: q_lat actúa como carga distribuida lateral (↓ en z)
+# Vz se acumula igual que Vy en el vertical
+# My = integral de Vz (igual que Mz = integral de Vy)
+
+x_saltos_lat = {x_N3: R_w3_lat, x_N7: R_w7_lat}
+x_eval_lat   = np.sort(np.unique(np.concatenate([
+    x_theta, np.array([x_N3, x_N7])])))
+
+x_lat   = [x_eval_lat[0]]
+Vz_lat  = [0.0]
+My_lat  = [0.0]
+
+Vz_acum = 0.0
+My_acum = 0.0
+x_prev  = x_eval_lat[0]
+
+for x_cur in x_eval_lat[1:]:
+    mask_seg = (x_theta >= x_prev) & (x_theta <= x_cur)
+    if mask_seg.sum() > 1:
+        xs = x_theta[mask_seg]
+        qs = q_lat_cont[mask_seg]
+        dQ = np.trapz(qs, xs)           # carga total en el segmento
+        dM = np.trapz(qs * (x_cur - xs), xs)  # momento en x_cur
+    else:
+        dQ = 0.0; dM = 0.0
+
+    # My acumula: Vz·dx - integral de q_lat·(x_cur - x)·dx
+    My_acum += Vz_acum * (x_cur - x_prev) - dM
+    Vz_acum -= dQ   # q_lat reduce Vz (igual que peso propio reduce Vy)
+
+    Fc_lat = x_saltos_lat.get(x_cur, 0.0)
+    if abs(Fc_lat) > 1e-10:
+        x_lat.append(x_cur);  Vz_lat.append(Vz_acum)
+        My_lat.append(My_acum)
+        Vz_acum += Fc_lat     # reacción sube Vz
+
+    x_lat.append(x_cur);  Vz_lat.append(Vz_acum)
+    My_lat.append(My_acum)
+    x_prev = x_cur
+
+x_lat  = np.array(x_lat)
+Vz_lat = np.array(Vz_lat)
+My_lat = np.array(My_lat)
+
+My_nodos = np.interp(nodos, x_lat, My_lat)
+
+print(f"\n  My_max = {np.max(np.abs(My_lat)):.6f} kN·m")
+print(f"\n  My en nodos:")
+for i in range(num_nodos):
+    print(f"    N{i+1} @ x={nodos[i]:.2f}m : My = {My_nodos[i]:.6f} kN·m")
+
+# ── 5. Deflexión lateral continua por Hermite (w y θy) ───────────────
+x_defl_lat = []
+w_defl     = []
+
+for i in range(num_nodos - 1):
+    Ls_ = nodos[i+1] - nodos[i]
+    if Ls_ <= 0:
+        continue
+    wi_  = u_global[i*7 + 2];      tyi_ = -u_global[i*7 + 4]   # signo θy
+    wj_  = u_global[(i+1)*7 + 2];  tyj_ = -u_global[(i+1)*7 + 4]
+
+    for xl in np.linspace(0, Ls_, 60):
+        xi_ = xl / Ls_
+        N1 = 1 - 3*xi_**2 + 2*xi_**3
+        N2 = Ls_*(xi_ - 2*xi_**2 + xi_**3)
+        N3 = 3*xi_**2 - 2*xi_**3
+        N4 = Ls_*(-xi_**2 + xi_**3)
+        w_pt = N1*wi_ + N2*tyi_ + N3*wj_ + N4*tyj_
+        x_defl_lat.append(nodos[i] + xl)
+        w_defl.append(w_pt * 1000)  # mm
+
+x_defl_lat = np.array(x_defl_lat)
+w_defl     = np.array(w_defl)
+w_nodos_mm = [u_global[i*7 + 2] * 1000 for i in range(num_nodos)]
+
+# ── 6. Tabla resumen ──────────────────────────────────────────────────
+print("\n" + "="*65)
+print("DIAGRAMAS LATERALES — RESUMEN")
+print("="*65)
+print(f"{'Nodo':<6} {'x(m)':>6} | {'Vz(kN)':>10} {'My(kN·m)':>12} {'w(mm)':>10}")
+print("-"*50)
+for i in range(num_nodos):
+    Vz_n = float(np.interp(nodos[i], x_lat, Vz_lat))
+    print(f"N{i+1:<4} {nodos[i]:>6.2f} | {Vz_n:>10.4f} {My_nodos[i]:>12.4f} {w_nodos_mm[i]:>10.4f}")
+
+# ── 7. Figura: 3 diagramas laterales ─────────────────────────────────
+fig_lat, axes_lat = plt.subplots(3, 1, figsize=(16, 14))
+
+def marcar_apoyos_lat(ax):
+    for xa in [nodos[2], nodos[6]]:
+        ax.axvline(xa, color='orange', ls=':', lw=2, alpha=0.8)
+
+# — Cortante lateral Vz —
+axes_lat[0].plot(x_lat, Vz_lat, '-', color='teal', lw=2.5, label='Cortante lateral Vz')
+axes_lat[0].fill_between(x_lat, Vz_lat, 0, alpha=0.25, color='teal')
+axes_lat[0].axhline(0, color='k', lw=0.8, ls='--', alpha=0.5)
+marcar_apoyos_lat(axes_lat[0])
+
+Vz_rng = max(np.max(np.abs(Vz_lat)), 1e-3)
+for xa, R, nom, col in [(x_N3, R_w3_lat, 'N3', 'blue'),
+                         (x_N7, R_w7_lat, 'N7', 'green')]:
+    axes_lat[0].annotate(
+        f'R_w{nom[-1]}={R:.4f} kN',
+        xy=(xa, 0),
+        xytext=(xa, Vz_rng * (0.5 if nom == 'N3' else -0.5)),
+        ha='center', fontsize=10, color=col, fontweight='bold',
+        arrowprops=dict(arrowstyle='->', lw=2, color=col),
+        bbox=dict(boxstyle='round', facecolor='white', edgecolor=col))
+
+Vz_nodos = [float(np.interp(nodos[i], x_lat, Vz_lat)) for i in range(num_nodos)]
+axes_lat[0].scatter(nodos, Vz_nodos, s=60, color='teal', zorder=5)
+axes_lat[0].set_ylabel('Vz lateral (kN)', fontweight='bold', fontsize=12)
+axes_lat[0].set_title('Cortante Lateral Vz', fontweight='bold', fontsize=13)
+axes_lat[0].grid(True, alpha=0.3)
+axes_lat[0].legend(fontsize=10)
+axes_lat[0].set_xlim([-0.5, LTOTAL+0.5])
+
+# — Momento lateral My —
+axes_lat[1].plot(x_lat, My_lat, '-', color='darkcyan', lw=2.5, label='Momento lateral My')
+axes_lat[1].fill_between(x_lat, My_lat, 0, alpha=0.25, color='darkcyan')
+axes_lat[1].axhline(0, color='k', lw=0.8, ls='--', alpha=0.5)
+marcar_apoyos_lat(axes_lat[1])
+
+idx_My_plot = np.argmax(np.abs(My_lat))
+axes_lat[1].annotate(
+    f'My_max={My_lat[idx_My_plot]:.4f} kN·m',
+    xy=(x_lat[idx_My_plot], My_lat[idx_My_plot]),
+    xytext=(x_lat[idx_My_plot] + 2, My_lat[idx_My_plot] * 0.7),
+    fontsize=10, color='darkred', fontweight='bold',
+    arrowprops=dict(arrowstyle='->', lw=1.5, color='darkred'),
+    bbox=dict(boxstyle='round', facecolor='white', edgecolor='darkred'))
+
+axes_lat[1].scatter(nodos, My_nodos, s=60, color='darkcyan', zorder=5)
+axes_lat[1].set_ylabel('My (kN·m)', fontweight='bold', fontsize=12)
+axes_lat[1].set_title('Momento Lateral My', fontweight='bold', fontsize=13)
+axes_lat[1].grid(True, alpha=0.3)
+axes_lat[1].legend(fontsize=10)
+axes_lat[1].set_xlim([-0.5, LTOTAL+0.5])
+
+# — Deflexión lateral w —
+axes_lat[2].plot(x_defl_lat, w_defl, '-', color='sienna', lw=2.5, label='Deflexión lateral w')
+axes_lat[2].plot(nodos, w_nodos_mm, 'o', color='sienna', ms=8,
+                 mec='white', mew=1.5, zorder=5, label='Nodos MEF')
+axes_lat[2].fill_between(x_defl_lat, w_defl, 0, alpha=0.2, color='sienna')
+axes_lat[2].axhline(0, color='k', lw=0.8, ls='--', alpha=0.5)
+marcar_apoyos_lat(axes_lat[2])
+
+idx_w_max = np.argmax(np.abs(w_defl))
+axes_lat[2].annotate(
+    f'w_max={w_defl[idx_w_max]:.4f} mm',
+    xy=(x_defl_lat[idx_w_max], w_defl[idx_w_max]),
+    xytext=(x_defl_lat[idx_w_max] + 2, w_defl[idx_w_max] * 0.7),
+    fontsize=10, color='sienna', fontweight='bold',
+    arrowprops=dict(arrowstyle='->', lw=1.5, color='sienna'),
+    bbox=dict(boxstyle='round', facecolor='white', edgecolor='sienna'))
+
+axes_lat[2].set_ylabel('Deflexión w (mm)', fontweight='bold', fontsize=12)
+axes_lat[2].set_xlabel('Posición (m)', fontweight='bold', fontsize=12)
+axes_lat[2].set_title('Deflexión Lateral w (Hermite)', fontweight='bold', fontsize=13)
+axes_lat[2].grid(True, alpha=0.3)
+axes_lat[2].legend(fontsize=10)
+axes_lat[2].set_xlim([-0.5, LTOTAL+0.5])
+
+plt.suptitle(
+    f'Diagramas Laterales — Viga PCI Tipo VI\n'
+    f'L={LTOTAL}m | a={a_L*LTOTAL:.1f}m | Grados={Grados}° | '
+    f'q_lat_max={np.max(np.abs(q_lat_cont)):.4f} kN/m',
+    fontsize=13, fontweight='bold')
+plt.tight_layout()
+plt.show()
+
+print("\n✅ Diagramas laterales completados")
+
+# ============================================================================
+# SECCIONES CRÍTICAS: MAYOR Mz Y MAYOR My
+# ============================================================================
+
+idx_Mz_max  = np.argmax(np.abs(Mz_eq))
+x_Mz_max    = x_eq[idx_Mz_max]
+Mz_max_crit = Mz_eq[idx_Mz_max]
+My_en_Mz    = float(np.interp(x_Mz_max, x_lat, My_lat))
+theta_en_Mz = float(np.interp(x_Mz_max, x_theta, theta_x_cont))
+
+idx_My_max  = np.argmax(np.abs(My_lat))
+x_My_max    = x_lat[idx_My_max]
+My_max_crit = My_lat[idx_My_max]
+Mz_en_My    = float(np.interp(x_My_max, x_eq, Mz_eq))
+theta_en_My = float(np.interp(x_My_max, x_theta, theta_x_cont))
+
+print("\n" + "="*70)
+print("SECCIONES CRÍTICAS")
+print("="*70)
+print(f"\n  Máximo |Mz|:")
+print(f"    x        = {x_Mz_max:.4f} m")
+print(f"    Mz       = {Mz_max_crit:.4f} kN·m")
+print(f"    My       = {My_en_Mz:.6f} kN·m")
+print(f"    θx       = {np.rad2deg(theta_en_Mz):.5f}°")
+print(f"\n  Máximo |My|:")
+print(f"    x        = {x_My_max:.4f} m")
+print(f"    My       = {My_max_crit:.6f} kN·m")
+print(f"    Mz       = {Mz_en_My:.4f} kN·m")
+print(f"    θx       = {np.rad2deg(theta_en_My):.5f}°")
+
+fig_crit, axes_crit = plt.subplots(2, 2, figsize=(16, 18),
+                                    gridspec_kw={'width_ratios': [2, 1]})
+fig_crit.suptitle(
+    'Secciones Críticas — Mayor Mz y Mayor My\n'
+    f'Viga PCI Tipo VI | L={LTOTAL}m | '
+    f'P_ps={P_pretensado:.0f}kN | e={e_pretensado}m',
+    fontsize=14, fontweight='bold')
+
+graficar_seccion(
+    axes_crit[0, 0], axes_crit[0, 1],
+    nodo_idx=-1, x_pos=x_Mz_max,
+    Mz_val=Mz_max_crit, My_val=My_en_Mz, theta_x=theta_en_Mz)
+axes_crit[0, 0].set_title(
+    f'Sección de Máximo |Mz|\n'
+    f'x={x_Mz_max:.3f} m  |  Mz={Mz_max_crit:.2f} kN·m  |  '
+    f'θx={np.rad2deg(theta_en_Mz):.4f}°',
+    fontsize=11, fontweight='bold', color='darkorange')
+
+graficar_seccion(
+    axes_crit[1, 0], axes_crit[1, 1],
+    nodo_idx=-1, x_pos=x_My_max,
+    Mz_val=Mz_en_My, My_val=My_max_crit, theta_x=theta_en_My)
+axes_crit[1, 0].set_title(
+    f'Sección de Máximo |My|\n'
+    f'x={x_My_max:.3f} m  |  My={My_max_crit:.6f} kN·m  |  '
+    f'θx={np.rad2deg(theta_en_My):.4f}°',
+    fontsize=11, fontweight='bold', color='teal')
+
+plt.tight_layout()
+plt.show()
+print("✓ Figura secciones críticas generada")
+
+
+# ============================================================================
+# FIGURA 1: TODOS LOS 9 NODOS
+# ============================================================================
+idx_Mmax_nodo = int(np.argmax(np.abs([esfuerzos_eq[i,5] for i in range(num_nodos)])))
+nodos_criticos = sorted(set([2, 4, 6, idx_Mmax_nodo]))
+
+print("\nGenerando figura: TODOS LOS NODOS...")
+fig1, axes1 = plt.subplots(3, 6, figsize=(28, 18),
+                            gridspec_kw={'width_ratios': [2,1]*3})
+fig1.suptitle(
+    'Esfuerzos en Sección Transversal — Todos los Nodos\n'
+    f'Viga PCI Tipo VI | L={LTOTAL}m | P_ps={P_pretensado:.0f}kN | e={e_pretensado}m',
+    fontsize=14, fontweight='bold')
+
+for col, i_nodo in enumerate(range(num_nodos)):
+    row  = col // 3
+    col2 = (col % 3) * 2
+    ax_s = axes1[row, col2]
+    ax_t = axes1[row, col2+1]
+    theta_x_nodo = float(np.interp(nodos[i_nodo], x_theta, theta_x_cont))
+    Mz_nodo      = esfuerzos_eq[i_nodo, 5]
+    My_nodo      = float(np.interp(nodos[i_nodo], x_lat, My_lat))
+    graficar_seccion(ax_s, ax_t, i_nodo, nodos[i_nodo], Mz_nodo, My_nodo, theta_x_nodo)
+
+plt.tight_layout()
+plt.show()
+print("✓ Figura todos los nodos generada")
+
+
+# ============================================================================
+# FIGURA 2: NODOS CRÍTICOS
+# ============================================================================
+print("\nGenerando figura: NODOS CRÍTICOS...")
+n_crit = len(nodos_criticos)
+fig2, axes2 = plt.subplots(n_crit, 2, figsize=(14, 7*n_crit),
+                            gridspec_kw={'width_ratios': [2, 1]})
+if n_crit == 1:
+    axes2 = [axes2]
+
+fig2.suptitle(
+    'Esfuerzos en Sección Transversal — Nodos Críticos\n'
+    f'Viga PCI Tipo VI | L={LTOTAL}m | P_ps={P_pretensado:.0f}kN | e={e_pretensado}m',
+    fontsize=14, fontweight='bold')
+
+for fila, i_nodo in enumerate(nodos_criticos):
+    theta_x_nodo = float(np.interp(nodos[i_nodo], x_theta, theta_x_cont))
+    Mz_nodo      = esfuerzos_eq[i_nodo, 5]
+    My_nodo      = float(np.interp(nodos[i_nodo], x_lat, My_lat))
+    graficar_seccion(axes2[fila][0], axes2[fila][1],
+                     i_nodo, nodos[i_nodo], Mz_nodo, My_nodo, theta_x_nodo)
+
+plt.tight_layout()
+plt.show()
+print("✓ Figura nodos críticos generada")
+print("\n✅ Secciones transversales completadas")
+
