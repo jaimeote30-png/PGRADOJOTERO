@@ -290,8 +290,8 @@ if CONSIDERAR_PRETENSADO:
     
     # 2. Fuerzas verticales en extremos
     F_vert_extremo = 3 * P * e / L
-    F_pretensado[0 * 7 + 1] = F_vert_extremo  # v1
-    F_pretensado[8 * 7 + 1] = F_vert_extremo  # v9
+    F_pretensado[0 * 7 + 1] = -F_vert_extremo  # v1
+    F_pretensado[8 * 7 + 1] = -F_vert_extremo  # v9
     print(f"✓ Fuerzas verticales extremos: {F_vert_extremo:.4f} kN")
     
     # 3. Transferir cargas en L/3 y 2L/3
@@ -325,9 +325,9 @@ if CONSIDERAR_PRETENSADO:
             M_der = -P_carga * (a_i**2) * b_i / (L_elem_i**2)
             
             F_pretensado[idx_izq_i * 7 + 1] += v_izq
-            F_pretensado[idx_izq_i * 7 + 3] += M_izq
+            F_pretensado[idx_izq_i * 7 + 5] += M_izq
             F_pretensado[idx_der_i * 7 + 1] += v_der
-            F_pretensado[idx_der_i * 7 + 3] += M_der
+            F_pretensado[idx_der_i * 7 + 5] += M_der
     
     # Carga derecha
     nodos_izq_2L3 = nodos[nodos <= pos_carga_der]
@@ -354,9 +354,9 @@ if CONSIDERAR_PRETENSADO:
             M_der = -P_carga * (a_d**2) * b_d / (L_elem_d**2)
             
             F_pretensado[idx_izq_d * 7 + 1] += v_izq
-            F_pretensado[idx_izq_d * 7 + 3] += M_izq
+            F_pretensado[idx_izq_d * 7 + 5] += M_izq
             F_pretensado[idx_der_d * 7 + 1] += v_der
-            F_pretensado[idx_der_d * 7 + 3] += M_der
+            F_pretensado[idx_der_d * 7 + 5] += M_der
     
     print(f"✓ Cargas en L/3 y 2L/3 transferidas a nodos")
     
@@ -1239,11 +1239,6 @@ Sistema de unidades: SI
 - Esfuerzos: MPa (se calculan internamente)
 """
 
-import numpy as np
-import matplotlib.pyplot as plt
-from matplotlib.patches import Polygon
-from matplotlib.path import Path
-import matplotlib.patches as mpatches
 
 # ==============================================================================
 # FUNCIONES PARA CREAR GEOMETRÍA DE LA SECCIÓN
@@ -1403,497 +1398,367 @@ def calcular_esfuerzos_seccion(N, My, Mz, A, Iy, Iz, vertices, n_points=200):
 
 
 
+
+
+
+
+
 # ============================================================================
-# SECCIÓN ADICIONAL: DIAGRAMAS CORREGIDOS DE CORTANTE Y MOMENTO
-# ============================================================================
-# Este código se añade AL FINAL de tu script existente (después de tus gráficos)
-# NO modifica ni elimina nada de tu código original
-# Genera diagramas adicionales usando el método correcto
+# BLOQUE FINAL: DIAGRAMAS CORREGIDOS POR EQUILIBRIO ACUMULADO
 # ============================================================================
 
-print("\n\n" + "="*80)
-print("GENERANDO DIAGRAMAS ADICIONALES (MÉTODO CORRECTO CON FUNCIONES DE HERMITE)")
-print("="*80)
+# ── Fuerzas internas por equilibrio acumulado desde x=0 ──────────────
+F_ps_val = 3 * P_pretensado * e_pretensado / LTOTAL if CONSIDERAR_PRETENSADO else 0.0
 
-# ----------------------------------------------------------------------------
-# FUNCIÓN PARA CALCULAR V(x) Y M(x) EN UN ELEMENTO
-# ----------------------------------------------------------------------------
+cargas_vert = {}
+if CONSIDERAR_PRETENSADO:
+    cargas_vert[nodos[0]]   = cargas_vert.get(nodos[0], 0.0)   - F_ps_val  # N1 ↓
+    cargas_vert[nodos[8]]   = cargas_vert.get(nodos[8], 0.0)   - F_ps_val  # N9 ↓
+    cargas_vert[LTOTAL/3]   = cargas_vert.get(LTOTAL/3, 0.0)   + F_ps_val  # ↑
+    cargas_vert[2*LTOTAL/3] = cargas_vert.get(2*LTOTAL/3, 0.0) + F_ps_val  # ↑
 
-def calcular_VM_correcto(x_local, L, vi, thetazi, vj, thetazj, q_dist, EI):
-    """
-    Calcula cortante V y momento M usando funciones de forma de Hermite
-    
-    Este es el método correcto que considera:
-    - Desplazamientos de la viga (de u_global)
-    - Cargas distribuidas
-    - Relación matemática: V = dM/dx
-    
-    Parámetros:
-    -----------
-    x_local : float
-        Posición dentro del elemento [0, L] en metros
-    L : float
-        Longitud del elemento en metros
-    vi, vj : float
-        Desplazamientos verticales en nodos i y j [m]
-    thetazi, thetazj : float
-        Rotaciones en nodos i y j [rad]
-    q_dist : float
-        Carga distribuida [kN/m] (positiva hacia abajo)
-    EI : float
-        Rigidez a flexión [kN·m²]
-    
-    Retorna:
-    --------
-    V, M : floats
-        Cortante [kN] y Momento [kN·m] en la posición x_local
-    """
-    
-    if L <= 0 or x_local < 0 or x_local > L:
-        return 0.0, 0.0
-    
-    # Coordenada local normalizada
-    xi = x_local / L
-    
-    # ------------------------------------------------------
-    # FUNCIONES DE FORMA DE HERMITE
-    # ------------------------------------------------------
-    # Estas funciones interpolan los desplazamientos
-    N1 = 1 - 3*xi**2 + 2*xi**3
-    N2 = L * (xi - 2*xi**2 + xi**3)
-    N3 = 3*xi**2 - 2*xi**3
-    N4 = L * (-xi**2 + xi**3)
-    
-    # ------------------------------------------------------
-    # SEGUNDA DERIVADA (para momento)
-    # ------------------------------------------------------
-    # M = -EI·d²v/dx²
-    d2N1_dx2 = (12*xi - 6) / L**2
-    d2N2_dx2 = (6*xi - 4) / L
-    d2N3_dx2 = (-12*xi + 6) / L**2
-    d2N4_dx2 = (6*xi - 2) / L
-    
-    # Curvatura
-    d2v = d2N1_dx2 * vi + d2N2_dx2 * thetazi + d2N3_dx2 * vj + d2N4_dx2 * thetazj
-    
-    # Momento por deformación elástica
-    M_elastico = -EI * d2v
-    
-    # ------------------------------------------------------
-    # TERCERA DERIVADA (para cortante)
-    # ------------------------------------------------------
-    # V = -EI·d³v/dx³
-    d3N1_dx3 = 12 / L**3
-    d3N2_dx3 = 6 / L**2
-    d3N3_dx3 = -12 / L**3
-    d3N4_dx3 = 6 / L**2
-    
-    # Tercera derivada
-    d3v = d3N1_dx3 * vi + d3N2_dx3 * thetazi + d3N3_dx3 * vj + d3N4_dx3 * thetazj
-    
-    # Cortante por deformación elástica
-    V_elastico = -EI * d3v
-    
-    # ------------------------------------------------------
-    # CONTRIBUCIÓN DE LA CARGA DISTRIBUIDA
-    # ------------------------------------------------------
-    # Momento adicional (parabólico)
-    M_carga = (q_dist * x_local * (L - x_local)) / 2
-    
-    # Cortante adicional (lineal)
-    V_carga = q_dist * (L/2 - x_local)
-    
-    # ------------------------------------------------------
-    # ESFUERZOS TOTALES
-    # ------------------------------------------------------
-    M_total = M_elastico + M_carga
-    V_total = V_elastico + V_carga
-    
-    return V_total, M_total
+cargas_vert[nodos[2]] = cargas_vert.get(nodos[2], 0.0) + R_v3
+cargas_vert[nodos[6]] = cargas_vert.get(nodos[6], 0.0) + R_v7
 
+todos_x = sorted(set(list(nodos) + list(cargas_vert.keys())))
 
-# ----------------------------------------------------------------------------
-# CALCULAR DIAGRAMAS CORREGIDOS EN TODA LA VIGA
-# ----------------------------------------------------------------------------
+Vy_acum = 0.0
+Mz_acum = 0.0
+x_prev  = 0.0
+tabla_eq = []
 
-print("\nCalculando diagramas con método de funciones de Hermite...")
+Vy_acum += cargas_vert.get(0.0, 0.0)
+tabla_eq.append((0.0, Vy_acum, Mz_acum))
 
-# Arreglos para almacenar resultados
-x_corregido = []      # Posiciones [m]
-V_corregido = []      # Cortantes [kN]
-M_corregido = []      # Momentos [kN·m]
+for x in todos_x[1:]:
+    dx = x - x_prev
+    Mz_acum += Vy_acum * dx - q * dx**2 / 2
+    Vy_acum -= q * dx
+    Fc = cargas_vert.get(x, 0.0)
+    if abs(Fc) > 1e-8:
+        tabla_eq.append((x, Vy_acum, Mz_acum))   # punto antes del salto
+        Vy_acum += Fc
+    tabla_eq.append((x, Vy_acum, Mz_acum))
+    x_prev = x
 
-# Número de puntos de evaluación por elemento (alta resolución)
-n_puntos = 80
+# Arrays continuos para graficar
+x_eq  = np.array([t[0] for t in tabla_eq])
+Vy_eq = np.array([t[1] for t in tabla_eq])
+Mz_eq = np.array([t[2] for t in tabla_eq])
 
-# Rigidez a flexión
-EI = E * PIF  # [kN·m²]
+# Esfuerzos en nodos (para tabla)
+esfuerzos_eq = np.zeros((num_nodos, 7))
+for i_nodo, xn in enumerate(nodos):
+    vals = [(Vy, Mz) for (x, Vy, Mz) in tabla_eq if abs(x - xn) < 1e-6]
+    if vals:
+        if i_nodo in [2, 6]:
+            esfuerzos_eq[i_nodo, 1] = vals[0][0]   # antes de la reacción
+            esfuerzos_eq[i_nodo, 5] = vals[0][1]
+        else:
+            esfuerzos_eq[i_nodo, 1] = vals[-1][0]
+            esfuerzos_eq[i_nodo, 5] = vals[-1][1]
 
-# Recorrer cada elemento
-for i_elem in range(num_nodos - 1):
-    
-    # Posiciones globales del elemento
-    xi_global = nodos[i_elem]
-    xj_global = nodos[i_elem + 1]
-    L_elem = xj_global - xi_global
-    
-    # Saltar elementos degenerados
-    if L_elem <= 1e-6:
-        continue
-    
-    # Extraer desplazamientos nodales
-    base_i = i_elem * 7
-    base_j = (i_elem + 1) * 7
-    
-    vi = u_global[base_i + 1]        # Desplazamiento vertical nodo i
-    thetazi = u_global[base_i + 5]   # Rotación θz nodo i
-    vj = u_global[base_j + 1]        # Desplazamiento vertical nodo j
-    thetazj = u_global[base_j + 5]   # Rotación θz nodo j
-    
-    # Evaluar en múltiples puntos dentro del elemento
-    x_locales = np.linspace(0, L_elem, n_puntos)
-    
-    for x_local in x_locales:
-        x_global = xi_global + x_local
-        
-        # Calcular cortante y momento con el método correcto
-        V, M = calcular_VM_correcto(
-            x_local, L_elem, 
-            vi, thetazi, vj, thetazj,
-            q, EI
-        )
-        
-        # Almacenar resultados
-        x_corregido.append(x_global)
-        V_corregido.append(V)
-        M_corregido.append(M)
+# ── Deflexión vertical continua por funciones de Hermite ─────────────
+x_defl = []; v_defl = []
+for i in range(num_nodos - 1):
+    Ls_ = nodos[i+1] - nodos[i]
+    if Ls_ <= 0: continue
+    vi_   = u_global[i*7 + 1];    tzi_  = u_global[i*7 + 5]
+    vj_   = u_global[(i+1)*7 + 1]; tzj_ = u_global[(i+1)*7 + 5]
+    for xl in np.linspace(0, Ls_, 60):
+        xi_ = xl / Ls_
+        N1 = 1 - 3*xi_**2 + 2*xi_**3
+        N2 = Ls_*(xi_ - 2*xi_**2 + xi_**3)
+        N3 = 3*xi_**2 - 2*xi_**3
+        N4 = Ls_*(-xi_**2 + xi_**3)
+        x_defl.append(nodos[i] + xl)
+        v_defl.append((N1*vi_ + N2*tzi_ + N3*vj_ + N4*tzj_)*1000)
 
-# Convertir a arrays
-x_corregido = np.array(x_corregido)
-V_corregido = np.array(V_corregido)
-M_corregido = np.array(M_corregido)
+x_defl = np.array(x_defl)
+v_defl = np.array(v_defl)
+v_nodos_mm = [u_global[i*7+1]*1000 for i in range(num_nodos)]
 
-print(f"✓ {len(x_corregido)} puntos calculados en {num_nodos-1} elementos")
+# ── Tabla de resultados en consola ───────────────────────────────────
+print("\n" + "="*60)
+print("FUERZAS INTERNAS — EQUILIBRIO ACUMULADO")
+print("="*60)
+print(f"{'Nodo':<6} {'x(m)':>6} | {'Vy(kN)':>10} {'Mz(kN·m)':>12}")
+print("-"*40)
+for i in range(num_nodos):
+    print(f"N{i+1:<5} {nodos[i]:>6.2f} | "
+          f"{esfuerzos_eq[i,1]:>10.4f} "
+          f"{esfuerzos_eq[i,5]:>12.4f}")
 
+print(f"\nDeflexión máxima (N5): {v_nodos_mm[4]:.4f} mm")
+print(f"Vy_max = {np.max(np.abs(esfuerzos_eq[:,1])):.4f} kN")
+print(f"Mz_max = {np.max(np.abs(esfuerzos_eq[:,5])):.4f} kN·m")
 
-# ----------------------------------------------------------------------------
-# COMPARACIÓN CON MÉTODO NODAL ORIGINAL
-# ----------------------------------------------------------------------------
+# ── Gráficos ─────────────────────────────────────────────────────────
+fig, axes = plt.subplots(3, 1, figsize=(16, 14))
 
-print("\n" + "="*80)
-print("COMPARACIÓN: MÉTODO NODAL vs MÉTODO DE HERMITE")
-print("="*80)
+def marcar_apoyos(ax):
+    for xa in [nodos[2], nodos[6]]:
+        ax.axvline(xa, color='orange', linestyle=':', linewidth=2, alpha=0.8)
 
-# Tu método original (esfuerzos nodales)
-V_nodal = esfuerzos_nodales[:, 1]  # Cortante Vy de tu código
-M_nodal = esfuerzos_nodales[:, 5]  # Momento Mz de tu código
+# 1) Cortante
+axes[0].plot(x_eq, Vy_eq, 'r-', linewidth=2.5, label='Cortante Vy')
+axes[0].fill_between(x_eq, Vy_eq, 0, alpha=0.25, color='red')
+axes[0].axhline(0, color='k', lw=0.8, ls='--', alpha=0.5)
+marcar_apoyos(axes[0])
+for idx, (i_ap, R, col, nom) in enumerate([(2, R_v3,'blue','N3'), (6, R_v7,'green','N7')]):
+    axes[0].annotate(f'R_{nom}={R:.1f} kN',
+                     xy=(nodos[i_ap], 0), xytext=(nodos[i_ap], Vy_eq.max()*0.5),
+                     ha='center', fontsize=10, color=col, fontweight='bold',
+                     arrowprops=dict(arrowstyle='->', lw=2, color=col),
+                     bbox=dict(boxstyle='round', facecolor='white', edgecolor=col))
+axes[0].scatter(nodos, esfuerzos_eq[:,1], s=60, color='darkred', zorder=5)
+axes[0].set_ylabel('Vy (kN)', fontweight='bold', fontsize=12)
+axes[0].set_title('Diagrama de Cortante Vertical (Equilibrio Acumulado)',
+                  fontweight='bold', fontsize=13)
+axes[0].grid(True, alpha=0.3)
+axes[0].legend(fontsize=10)
+axes[0].set_xlim([-0.5, LTOTAL+0.5])
 
-print("\nMÉTODO NODAL (tu código original):")
-print(f"  Cortante máximo:  {V_nodal.max():>10.2f} kN")
-print(f"  Cortante mínimo:  {V_nodal.min():>10.2f} kN")
-print(f"  Momento máximo:   {M_nodal.max():>10.2f} kN·m")
-print(f"  Momento mínimo:   {M_nodal.min():>10.2f} kN·m")
+# 2) Momento flector
+axes[1].plot(x_eq, Mz_eq, '-', color='darkorange', linewidth=2.5, label='Momento Mz')
+axes[1].fill_between(x_eq, Mz_eq, 0, alpha=0.25, color='orange')
+axes[1].axhline(0, color='k', lw=0.8, ls='--', alpha=0.5)
+marcar_apoyos(axes[1])
+axes[1].scatter(nodos, esfuerzos_eq[:,5], s=60, color='saddlebrown', zorder=5)
+idx_Mmax = np.argmin(Mz_eq)   # mínimo = mayor magnitud negativa
+axes[1].annotate(f'Mz={Mz_eq[idx_Mmax]:.1f} kN·m',
+                 xy=(x_eq[idx_Mmax], Mz_eq[idx_Mmax]),
+                 xytext=(x_eq[idx_Mmax]+2, Mz_eq[idx_Mmax]*0.85),
+                 fontsize=10, color='darkred', fontweight='bold',
+                 arrowprops=dict(arrowstyle='->', lw=1.5, color='darkred'))
+axes[1].set_ylabel('Mz (kN·m)', fontweight='bold', fontsize=12)
+axes[1].set_title('Diagrama de Momento Flector Mz (Equilibrio Acumulado)',
+                  fontweight='bold', fontsize=13)
+axes[1].grid(True, alpha=0.3)
+axes[1].legend(fontsize=10)
+axes[1].set_xlim([-0.5, LTOTAL+0.5])
 
-print("\nMÉTODO DE HERMITE (método correcto):")
-print(f"  Cortante máximo:  {V_corregido.max():>10.2f} kN")
-print(f"  Cortante mínimo:  {V_corregido.min():>10.2f} kN")
-print(f"  Momento máximo:   {M_corregido.max():>10.2f} kN·m")
-print(f"  Momento mínimo:   {M_corregido.min():>10.2f} kN·m")
+# 3) Deflexión vertical
+axes[2].plot(x_defl, v_defl, '-', color='purple', linewidth=2.5, label='Deflexión v')
+axes[2].plot(nodos, v_nodos_mm, 'o', color='purple', ms=8, mec='white',
+             mew=1.5, zorder=5, label='Nodos MEF')
+axes[2].fill_between(x_defl, v_defl, 0, alpha=0.2, color='purple')
+axes[2].axhline(0, color='k', lw=0.8, ls='--', alpha=0.5)
+marcar_apoyos(axes[2])
+axes[2].annotate(f'v_max={v_nodos_mm[4]:.2f} mm',
+                 xy=(nodos[4], v_nodos_mm[4]),
+                 xytext=(nodos[4]+2, v_nodos_mm[4]*0.8),
+                 fontsize=10, color='purple', fontweight='bold',
+                 arrowprops=dict(arrowstyle='->', lw=1.5, color='purple'))
+axes[2].set_ylabel('Deflexión v (mm)', fontweight='bold', fontsize=12)
+axes[2].set_xlabel('Posición (m)', fontweight='bold', fontsize=12)
+axes[2].set_title('Deflexión Vertical (Funciones de Hermite)',
+                  fontweight='bold', fontsize=13)
+axes[2].grid(True, alpha=0.3)
+axes[2].legend(fontsize=10)
+axes[2].set_xlim([-0.5, LTOTAL+0.5])
 
-# Diferencias
-print("\nDIFERENCIAS:")
-print(f"  ΔV_max = {abs(V_corregido.max() - V_nodal.max()):>10.2f} kN")
-print(f"  ΔM_max = {abs(M_corregido.max() - M_nodal.max()):>10.2f} kN·m")
-
-
-# ----------------------------------------------------------------------------
-# VERIFICACIÓN: V = dM/dx
-# ----------------------------------------------------------------------------
-
-print("\n" + "="*80)
-print("VERIFICACIÓN MATEMÁTICA: V = dM/dx")
-print("="*80)
-
-# Calcular derivada numérica del momento
-dM_dx = np.gradient(M_corregido, x_corregido)
-
-# Error entre cortante calculado y derivada del momento
-error_V_dM = np.abs(V_corregido - dM_dx)
-error_medio = np.mean(error_V_dM)
-error_max = np.max(error_V_dM)
-
-print(f"\nError en la relación V = dM/dx:")
-print(f"  Error medio:  {error_medio:.4f} kN")
-print(f"  Error máximo: {error_max:.4f} kN")
-
-if error_medio < 1.0:
-    print("  ✓ VERIFICACIÓN EXITOSA: Los diagramas corregidos cumplen V = dM/dx")
-else:
-    print("  ⚠ Advertencia: Error elevado")
-
-
-# ----------------------------------------------------------------------------
-# GRÁFICOS COMPARATIVOS
-# ----------------------------------------------------------------------------
-
-print("\n" + "="*80)
-print("GENERANDO GRÁFICOS COMPARATIVOS...")
-print("="*80)
-
-# Crear figura con 2 filas y 2 columnas
-fig = plt.figure(figsize=(20, 12))
-
-# ============================================
-# FILA 1: CORTANTE
-# ============================================
-
-# Gráfico 1: Cortante - Método Nodal (tu código original)
-ax1 = plt.subplot(2, 2, 1)
-ax1.plot(nodos, V_nodal, 's-', linewidth=2.5, markersize=8, color='red', 
-         label='Cortante Vy (Nodal)', zorder=3)
-ax1.fill_between(nodos, V_nodal, 0, alpha=0.3, color='red', zorder=2)
-ax1.axhline(y=0, color='k', linestyle='--', linewidth=0.8, alpha=0.5)
-
-# Marcar apoyos
-for i_apoyo in [2, 6]:
-    ax1.axvline(x=nodos[i_apoyo], color='blue', linestyle=':', 
-                linewidth=2, alpha=0.7)
-
-ax1.set_ylabel('Cortante Vy (kN)', fontweight='bold', fontsize=12)
-ax1.set_title('MÉTODO NODAL (Tu código original)\nCortante en nodos', 
-              fontweight='bold', fontsize=13)
-ax1.grid(True, alpha=0.3)
-ax1.legend(fontsize=10)
-ax1.set_xlim([0, LTOTAL])
-
-# Gráfico 2: Cortante - Método de Hermite (corregido)
-ax2 = plt.subplot(2, 2, 2)
-ax2.plot(x_corregido, V_corregido, '-', linewidth=2.5, color='darkred', 
-         label='Cortante Vy (Hermite)', zorder=3)
-ax2.fill_between(x_corregido, V_corregido, 0, alpha=0.3, color='red', zorder=2)
-ax2.axhline(y=0, color='k', linestyle='--', linewidth=0.8, alpha=0.5)
-
-# Marcar apoyos y reacciones
-for idx, i_apoyo in enumerate([2, 6]):
-    x_apoyo = nodos[i_apoyo]
-    color = 'blue' if idx == 0 else 'green'
-    R = R_v3 if idx == 0 else R_v7
-    
-    ax2.axvline(x=x_apoyo, color=color, linestyle=':', linewidth=2.5, alpha=0.8)
-    ax2.text(x_apoyo, V_corregido.max()*0.3, f'R={R:.1f} kN',
-             fontsize=9, ha='center', fontweight='bold', color=color,
-             bbox=dict(boxstyle='round', facecolor='white', edgecolor=color))
-
-ax2.set_ylabel('Cortante Vy (kN)', fontweight='bold', fontsize=12)
-ax2.set_title('MÉTODO DE HERMITE (Correcto)\nCortante continuo con V=dM/dx', 
-              fontweight='bold', fontsize=13, color='darkgreen')
-ax2.grid(True, alpha=0.3)
-ax2.legend(fontsize=10)
-ax2.set_xlim([0, LTOTAL])
-
-# ============================================
-# FILA 2: MOMENTO
-# ============================================
-
-# Gráfico 3: Momento - Método Nodal (tu código original)
-ax3 = plt.subplot(2, 2, 3)
-ax3.plot(nodos, M_nodal, '^-', linewidth=2.5, markersize=8, color='orange', 
-         label='Momento Mz (Nodal)', zorder=3)
-ax3.fill_between(nodos, M_nodal, 0, alpha=0.3, color='orange', zorder=2)
-ax3.axhline(y=0, color='k', linestyle='--', linewidth=0.8, alpha=0.5)
-
-# Marcar apoyos
-for i_apoyo in [2, 6]:
-    ax3.axvline(x=nodos[i_apoyo], color='blue', linestyle=':', 
-                linewidth=2, alpha=0.7)
-
-ax3.set_ylabel('Momento Mz (kN·m)', fontweight='bold', fontsize=12)
-ax3.set_xlabel('Posición (m)', fontweight='bold', fontsize=12)
-ax3.set_title('MÉTODO NODAL (Tu código original)\nMomento en nodos', 
-              fontweight='bold', fontsize=13)
-ax3.grid(True, alpha=0.3)
-ax3.legend(fontsize=10)
-ax3.set_xlim([0, LTOTAL])
-
-# Gráfico 4: Momento - Método de Hermite (corregido)
-ax4 = plt.subplot(2, 2, 4)
-ax4.plot(x_corregido, M_corregido, '-', linewidth=2.5, color='darkorange', 
-         label='Momento Mz (Hermite)', zorder=3)
-ax4.fill_between(x_corregido, M_corregido, 0, alpha=0.35, color='orange', zorder=2)
-ax4.axhline(y=0, color='k', linestyle='--', linewidth=0.8, alpha=0.5)
-
-# Marcar apoyos
-for idx, i_apoyo in enumerate([2, 6]):
-    x_apoyo = nodos[i_apoyo]
-    color = 'blue' if idx == 0 else 'green'
-    ax4.axvline(x=x_apoyo, color=color, linestyle=':', linewidth=2.5, alpha=0.8)
-
-# Marcar máximo
-idx_M_max = np.argmax(M_corregido)
-ax4.plot(x_corregido[idx_M_max], M_corregido[idx_M_max], 'o', 
-         color='darkred', markersize=12, markeredgecolor='black', 
-         markeredgewidth=2, label=f'M_máx = {M_corregido[idx_M_max]:.2f} kN·m', 
-         zorder=5)
-
-ax4.set_ylabel('Momento Mz (kN·m)', fontweight='bold', fontsize=12)
-ax4.set_xlabel('Posición (m)', fontweight='bold', fontsize=12)
-ax4.set_title('MÉTODO DE HERMITE (Correcto)\nMomento continuo derivable', 
-              fontweight='bold', fontsize=13, color='darkgreen')
-ax4.grid(True, alpha=0.3)
-ax4.legend(fontsize=10)
-ax4.set_xlim([0, LTOTAL])
-
-# Título general
-fig.suptitle('COMPARACIÓN DE MÉTODOS: NODAL vs HERMITE\n' + 
-             'Izquierda: Tu código original (solo nodos) | Derecha: Método correcto (continuo)',
-             fontsize=16, fontweight='bold', y=0.98)
-
-plt.tight_layout(rect=[0, 0, 1, 0.96])
-
-print("✓ Gráficos comparativos generados")
-
-
-# ----------------------------------------------------------------------------
-# GRÁFICO ADICIONAL: SOLO DIAGRAMAS CORREGIDOS (LIMPIO)
-# ----------------------------------------------------------------------------
-
-print("\nGenerando gráficos de diagramas corregidos (versión limpia)...")
-
-fig2, axes2 = plt.subplots(2, 1, figsize=(18, 12))
-
-# ============================================
-# CORTANTE CORREGIDO
-# ============================================
-ax_V = axes2[0]
-
-ax_V.plot(x_corregido, V_corregido, 'r-', linewidth=3, 
-          label='Cortante Vy', zorder=3)
-ax_V.fill_between(x_corregido, V_corregido, 0, alpha=0.3, color='red', zorder=2)
-ax_V.axhline(y=0, color='black', linestyle='--', linewidth=1, alpha=0.7)
-
-# Marcar apoyos con reacciones
-colores = ['blue', 'green']
-for idx, i_apoyo in enumerate([2, 6]):
-    x_apoyo = nodos[i_apoyo]
-    R = R_v3 if idx == 0 else R_v7
-    color = colores[idx]
-    nombre = 'N3' if idx == 0 else 'N7'
-    
-    ax_V.axvline(x=x_apoyo, color=color, linestyle=':', linewidth=2.5, 
-                 alpha=0.8, label=f'Apoyo {nombre}', zorder=4)
-    
-    y_pos = V_corregido.max() * 0.4
-    ax_V.annotate(f'R_{nombre} = {R:.1f} kN', 
-                  xy=(x_apoyo, 0), xytext=(x_apoyo, y_pos),
-                  fontsize=12, ha='center', fontweight='bold', color=color,
-                  arrowprops=dict(arrowstyle='->', lw=2.5, color=color),
-                  bbox=dict(boxstyle='round,pad=0.5', facecolor='white', 
-                           edgecolor=color, alpha=0.95),
-                  zorder=5)
-
-ax_V.set_ylabel('Cortante Vy (kN)', fontweight='bold', fontsize=14)
-ax_V.set_title('Diagrama de Cortante Vertical - MÉTODO CORRECTO (Funciones de Hermite)\n' +
-               'Incluye efecto de cargas distribuidas y cumple V = dM/dx', 
-               fontweight='bold', fontsize=15, pad=15)
-ax_V.grid(True, alpha=0.4, linestyle='--')
-ax_V.legend(fontsize=12, loc='best', framealpha=0.95)
-ax_V.set_xlim([0, LTOTAL])
-
-# Valores extremos
-V_max_val = V_corregido.max()
-V_min_val = V_corregido.min()
-idx_Vmax = np.argmax(V_corregido)
-idx_Vmin = np.argmin(V_corregido)
-ax_V.plot(x_corregido[idx_Vmax], V_max_val, 'r*', markersize=20, zorder=6)
-ax_V.plot(x_corregido[idx_Vmin], V_min_val, 'b*', markersize=20, zorder=6)
-
-# ============================================
-# MOMENTO CORREGIDO
-# ============================================
-ax_M = axes2[1]
-
-ax_M.plot(x_corregido, M_corregido, '-', color='darkorange', linewidth=3, 
-          label='Momento Mz', zorder=3)
-ax_M.fill_between(x_corregido, M_corregido, 0, alpha=0.35, color='orange', zorder=2)
-ax_M.axhline(y=0, color='black', linestyle='--', linewidth=1, alpha=0.7)
-
-# Marcar apoyos
-for idx, i_apoyo in enumerate([2, 6]):
-    x_apoyo = nodos[i_apoyo]
-    color = colores[idx]
-    nombre = 'N3' if idx == 0 else 'N7'
-    
-    ax_M.axvline(x=x_apoyo, color=color, linestyle=':', linewidth=2.5, 
-                 alpha=0.8, label=f'Apoyo {nombre}', zorder=4)
-
-ax_M.set_ylabel('Momento Mz (kN·m)', fontweight='bold', fontsize=14)
-ax_M.set_xlabel('Posición a lo largo de la viga (m)', fontweight='bold', fontsize=14)
-ax_M.set_title('Diagrama de Momento Flector - MÉTODO CORRECTO (Funciones de Hermite)\n' +
-               'Verificado: dM/dx = V', 
-               fontweight='bold', fontsize=15, pad=15)
-ax_M.grid(True, alpha=0.4, linestyle='--')
-ax_M.legend(fontsize=12, loc='best', framealpha=0.95)
-ax_M.set_xlim([0, LTOTAL])
-
-# Valores extremos
-M_max_val = M_corregido.max()
-M_min_val = M_corregido.min()
-idx_Mmax = np.argmax(M_corregido)
-idx_Mmin = np.argmin(M_corregido)
-ax_M.plot(x_corregido[idx_Mmax], M_max_val, 'o', color='darkred', markersize=14,
-          markeredgecolor='black', markeredgewidth=2,
-          label=f'M_máx = {M_max_val:.2f} kN·m @ x={x_corregido[idx_Mmax]:.2f}m', 
-          zorder=6)
-ax_M.plot(x_corregido[idx_Mmin], M_min_val, 'o', color='darkblue', markersize=14,
-          markeredgecolor='black', markeredgewidth=2,
-          label=f'M_mín = {M_min_val:.2f} kN·m @ x={x_corregido[idx_Mmin]:.2f}m', 
-          zorder=6)
-
-ax_M.legend(fontsize=11, loc='best', framealpha=0.95)
-
+plt.suptitle(
+    f'Viga PCI Tipo VI — Izaje | L={LTOTAL}m | a={a_L * LTOTAL:.1f}m | '
+    f'P_ps={P_pretensado:.0f}kN | e={e_pretensado}m',
+    fontsize=13, fontweight='bold'
+)
 plt.tight_layout()
-
-print("✓ Gráficos de diagramas corregidos generados")
-
-
-# ----------------------------------------------------------------------------
-# RESUMEN FINAL
-# ----------------------------------------------------------------------------
-
-print("\n" + "="*80)
-print("RESUMEN DE DIAGRAMAS CORREGIDOS")
-print("="*80)
-
-print(f"\nDIAGRAMA DE CORTANTE:")
-print(f"  V máximo:  {V_max_val:>10.2f} kN  en x = {x_corregido[idx_Vmax]:>6.2f} m")
-print(f"  V mínimo:  {V_min_val:>10.2f} kN  en x = {x_corregido[idx_Vmin]:>6.2f} m")
-
-print(f"\nDIAGRAMA DE MOMENTO:")
-print(f"  M máximo:  {M_max_val:>10.2f} kN·m  en x = {x_corregido[idx_Mmax]:>6.2f} m")
-print(f"  M mínimo:  {M_min_val:>10.2f} kN·m  en x = {x_corregido[idx_Mmin]:>6.2f} m")
-
-print(f"\nREACCIONES EN APOYOS:")
-print(f"  R_v3 (N3 @ x={nodos[2]:.2f}m):  {R_v3:.2f} kN")
-print(f"  R_v7 (N7 @ x={nodos[6]:.2f}m):  {R_v7:.2f} kN")
-print(f"  Suma:                           {R_v3+R_v7:.2f} kN")
-print(f"  Peso total viga:                {q*LTOTAL:.2f} kN")
-print(f"  Equilibrio (diferencia):        {abs((R_v3+R_v7) - q*LTOTAL):.4f} kN")
-
-print("\n" + "="*80)
-print("✓ DIAGRAMAS CORREGIDOS COMPLETADOS")
-print("="*80)
-print("\nCARACTERÍSTICAS DE LOS DIAGRAMAS CORREGIDOS:")
-print("  ✓ Calculados con funciones de forma de Hermite")
-print("  ✓ Consideran desplazamientos reales (de u_global)")
-print("  ✓ Incluyen efecto de cargas distribuidas")
-print("  ✓ Cumplen la relación matemática V = dM/dx")
-print("  ✓ Son continuos y diferenciables")
-print("  ✓ Verifican equilibrio global")
-print("\nTU CÓDIGO ORIGINAL SE MANTIENE INTACTO")
-print("Los esfuerzos nodales siguen disponibles en 'esfuerzos_nodales'")
-print("="*80)
-
-# Mostrar todos los gráficos
 plt.show()
 
-print("\n✅ Proceso completado exitosamente")
+print("\n✅ Diagramas corregidos completados")
+
+
+
+# ============================================================================
+# ESFUERZOS EN FIBRAS EXTREMAS PARA CADA NODO
+# ============================================================================
+
+# ============================================================================
+# MOMENTO MÁXIMO REAL Y ESFUERZOS EN ESA SECCIÓN
+# ============================================================================
+
+# Encontrar posición y valor del momento máximo en magnitud
+idx_Mmax_real = np.argmax(np.abs(Mz_eq))
+x_Mmax        = x_eq[idx_Mmax_real]
+Mz_max_real   = Mz_eq[idx_Mmax_real]
+
+print("\n" + "="*70)
+print("MOMENTO MÁXIMO REAL")
+print("="*70)
+print(f"  Posición:  x = {x_Mmax:.4f} m")
+print(f"  Valor:     Mz = {Mz_max_real:.4f} kN·m")
+
+# Esfuerzos en esa sección
+D1    = 1.829
+yc    = 0.9140
+y_sup =  D1 - yc
+y_inf = -yc
+N_axial = -P_pretensado if CONSIDERAR_PRETENSADO else 0.0
+
+sigma_sup_max = ((N_axial / PA) - (Mz_max_real * y_sup / PIF)) / 1000  # MPa
+sigma_inf_max = ((N_axial / PA) - (Mz_max_real * y_inf / PIF)) / 1000  # MPa
+
+print(f"\n  Esfuerzos en la sección de momento máximo:")
+print(f"  σ_sup = {sigma_sup_max:.4f} MPa  "
+      f"({'COMPRESIÓN' if sigma_sup_max < 0 else 'TENSIÓN'})")
+print(f"  σ_inf = {sigma_inf_max:.4f} MPa  "
+      f"({'COMPRESIÓN' if sigma_inf_max < 0 else 'TENSIÓN'})")
+
+# Propiedades geométricas de la sección PCI VI
+D1 = 1.829       # Altura total (m)
+yc = 0.9140      # Centroide desde la fibra inferior (m) — valor PCI VI
+y_sup =  D1 - yc # Distancia centroide → fibra superior (m)
+y_inf = -yc      # Distancia centroide → fibra inferior (m)
+
+# Fuerza axial de pretensado (compresión = negativa)
+N_axial = -P_pretensado if CONSIDERAR_PRETENSADO else 0.0  # kN
+
+print("\n" + "="*100)
+print("ESFUERZOS EN FIBRAS EXTREMAS POR SECCIÓN (Flexión Vertical + Axial)")
+print("="*100)
+print(f"  Propiedades: A={PA} m²  |  Iz={PIF} m⁴  |  yc={yc} m")
+print(f"  y_sup = +{y_sup:.4f} m  (fibra superior)")
+print(f"  y_inf =  {y_inf:.4f} m  (fibra inferior)")
+print(f"  N_axial = {N_axial:.1f} kN  ({'compresión' if N_axial < 0 else 'tensión'})")
+print("="*100)
+print(f"\n{'Nodo':<6} {'x(m)':>6} | {'Mz(kN·m)':>12} | "
+      f"{'σ_sup(MPa)':>12} {'σ_inf(MPa)':>12} | "
+      f"{'Estado sup':>14} {'Estado inf':>14}")
+print("-"*100)
+
+resultados_secciones = []
+
+for i in range(num_nodos):
+    xn    = nodos[i]
+    Mz_n  = esfuerzos_eq[i, 5]   # kN·m
+    
+    # σ = N/A  -  Mz·y / Iz     (unidades: kN, m → kPa → /1000 → MPa)
+    sigma_sup = (N_axial / PA) - (Mz_n * y_sup / PIF)   # kPa
+    sigma_inf = (N_axial / PA) - (Mz_n * y_inf / PIF)   # kPa
+    
+    sigma_sup_MPa = sigma_sup / 1000   # MPa
+    sigma_inf_MPa = sigma_inf / 1000   # MPa
+    
+    # Clasificación
+    def estado(s):
+        if s < -0.5:  return "COMPRESIÓN"
+        if s >  0.5:  return "TENSIÓN"
+        return "≈ NEUTRO"
+    
+    estado_sup = estado(sigma_sup_MPa)
+    estado_inf = estado(sigma_inf_MPa)
+    
+    resultados_secciones.append({
+        'Nodo': f'N{i+1}',
+        'x (m)': xn,
+        'Mz (kN·m)': round(Mz_n, 2),
+        'σ_sup (MPa)': round(sigma_sup_MPa, 4),
+        'σ_inf (MPa)': round(sigma_inf_MPa, 4),
+        'Estado sup': estado_sup,
+        'Estado inf': estado_inf,
+    })
+    
+    marca = " *" if i in [2, 6] else ""
+    print(f"N{i+1:<4}{marca:<2} {xn:>6.2f} | "
+          f"{Mz_n:>12.2f} | "
+          f"{sigma_sup_MPa:>12.4f} {sigma_inf_MPa:>12.4f} | "
+          f"{estado_sup:>14} {estado_inf:>14}")
+
+print("-"*100)
+print("  * = apoyos de izaje    |    σ = N/A − Mz·y/Iz    |    + tensión / − compresión")
+
+# ── DataFrame para visualización ─────────────────────────────────────
+df_secciones = pd.DataFrame(resultados_secciones)
+print("\n" + "="*100)
+print("TABLA RESUMEN — DataFrame")
+print("="*100)
+print(df_secciones.to_string(index=False))
+
+# ── Valores críticos ─────────────────────────────────────────────────
+print("\n" + "="*70)
+print("VALORES CRÍTICOS")
+print("="*70)
+
+idx_max_comp_sup = df_secciones['σ_sup (MPa)'].idxmin()
+idx_max_tens_inf = df_secciones['σ_inf (MPa)'].idxmax()
+idx_max_comp_inf = df_secciones['σ_inf (MPa)'].idxmin()
+idx_max_tens_sup = df_secciones['σ_sup (MPa)'].idxmax()
+
+print(f"\nMáxima COMPRESIÓN en fibra superior:")
+r = df_secciones.iloc[idx_max_comp_sup]
+print(f"  {r['Nodo']} @ x={r['x (m)']:.2f}m  →  σ_sup = {r['σ_sup (MPa)']:.4f} MPa")
+
+print(f"\nMáxima TENSIÓN en fibra inferior:")
+r = df_secciones.iloc[idx_max_tens_inf]
+print(f"  {r['Nodo']} @ x={r['x (m)']:.2f}m  →  σ_inf = {r['σ_inf (MPa)']:.4f} MPa")
+
+print(f"\nMáxima COMPRESIÓN en fibra inferior:")
+r = df_secciones.iloc[idx_max_comp_inf]
+print(f"  {r['Nodo']} @ x={r['x (m)']:.2f}m  →  σ_inf = {r['σ_inf (MPa)']:.4f} MPa")
+
+print(f"\nMáxima TENSIÓN en fibra superior:")
+r = df_secciones.iloc[idx_max_tens_sup]
+print(f"  {r['Nodo']} @ x={r['x (m)']:.2f}m  →  σ_sup = {r['σ_sup (MPa)']:.4f} MPa")
+
+# ── Gráfico de esfuerzos ──────────────────────────────────────────────
+fig, ax = plt.subplots(figsize=(16, 6))
+
+x_plot = df_secciones['x (m)']
+s_sup  = df_secciones['σ_sup (MPa)']
+s_inf  = df_secciones['σ_inf (MPa)']
+
+ax.plot(x_plot, s_sup, 'b-o', linewidth=2.5, markersize=8,
+        label='σ fibra superior', zorder=4)
+ax.plot(x_plot, s_inf, 'r-o', linewidth=2.5, markersize=8,
+        label='σ fibra inferior', zorder=4)
+ax.fill_between(x_plot, s_sup, s_inf, alpha=0.10, color='gray',
+                label='Rango σ sección')
+ax.axhline(0, color='k', lw=0.8, ls='--', alpha=0.6)
+
+# Límites de referencia (opcional — ajusta según tu normativa)
+ax.axhline( 0.6*fc, color='green',  lw=1.2, ls=':', alpha=0.7,
+            label=f'0.6·fc = {0.6*fc:.1f} MPa (comp. admisible)')
+ax.axhline(-0.6*fc, color='green',  lw=1.2, ls=':', alpha=0.7)
+
+for xa in [nodos[2], nodos[6]]:
+    ax.axvline(xa, color='orange', lw=2, ls=':', alpha=0.8)
+
+# Anotar valores en cada nodo
+for i, row in df_secciones.iterrows():
+    ax.annotate(f"{row['σ_sup (MPa)']:.2f}",
+                xy=(row['x (m)'], row['σ_sup (MPa)']),
+                xytext=(0, 8), textcoords='offset points',
+                ha='center', fontsize=8, color='blue')
+    ax.annotate(f"{row['σ_inf (MPa)']:.2f}",
+                xy=(row['x (m)'], row['σ_inf (MPa)']),
+                xytext=(0, -14), textcoords='offset points',
+                ha='center', fontsize=8, color='red')
+
+ax.set_xlabel('Posición (m)', fontweight='bold', fontsize=12)
+ax.set_ylabel('Esfuerzo normal σ (MPa)', fontweight='bold', fontsize=12)
+ax.set_title(
+    f'Esfuerzos en Fibras Extremas — Viga PCI Tipo VI\n'
+    f'L={LTOTAL}m | a={a_L*LTOTAL:.1f}m | P_ps={P_pretensado:.0f}kN | '
+    f'e={e_pretensado}m | N_axial={N_axial:.0f}kN',
+    fontweight='bold', fontsize=13)
+ax.set_xlim([-0.5, LTOTAL+0.5])
+ax.legend(fontsize=10, loc='best')
+ax.grid(True, alpha=0.3)
+
+# Marcar posición del momento máximo
+ax.axvline(x_Mmax, color='darkred', lw=2, ls='--', alpha=0.8,
+           label=f'Mz_max @ x={x_Mmax:.2f}m')
+ax.plot(x_Mmax, sigma_sup_max, 'b*', ms=14, zorder=6)
+ax.plot(x_Mmax, sigma_inf_max, 'r*', ms=14, zorder=6)
+ax.annotate(f"x={x_Mmax:.2f}m\nMz={Mz_max_real:.1f}kN·m",
+            xy=(x_Mmax, min(sigma_sup_max, sigma_inf_max)),
+            xytext=(x_Mmax + 1.5, min(sigma_sup_max, sigma_inf_max) * 0.7),
+            fontsize=9, color='darkred', fontweight='bold',
+            arrowprops=dict(arrowstyle='->', lw=1.5, color='darkred'),
+            bbox=dict(boxstyle='round', facecolor='white', edgecolor='darkred'))
+
+plt.tight_layout()
+plt.show()
+
+print("\n✅ Esfuerzos en secciones completados")
